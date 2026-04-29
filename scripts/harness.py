@@ -755,6 +755,165 @@ def print_metrics_summary(all_runs, m3_by_system, m4_by_system):
         print()
 
 
+def rebuild_from_existing_run(task, system_key):
+    """Rebuild run entry from existing output files without re-running OpenCode.
+    Returns None if run directory or stdout_build.txt doesn't exist."""
+    run_id = f"{task['task_id']}__{system_key}__s0"
+    workdir = f"{OUTPUT_ROOT}/runs/{run_id}"
+    # Check both new (stdout_build.txt) and old (stdout.txt) naming
+    has_output = (os.path.exists(f"{workdir}/stdout_build.txt") or
+                  os.path.exists(f"{workdir}/stdout.txt"))
+    if not has_output:
+        return None
+
+    sys_cfg = SYSTEMS[system_key]
+    task_data_file = f"{TASK_DATA_DIR}/{task['task_id']}.json"
+    with open(task_data_file) as f:
+        task_data = json.load(f)
+
+    # Read all stdout files
+    all_stdout = []
+    all_tokens = {"input": 0, "output": 0, "total": 0}
+    all_steps = 0
+    total_runtime = 0
+    subagent_outputs = {}
+
+    # Read build stdout (try suffix variants: new harness writes stdout_build.txt, old writes stdout.txt)
+    build_stdout = None
+    build_stderr = ""
+    for (out_suffix, err_suffix) in [("build", "build"), ("", "")]:
+        out_path = f"{workdir}/stdout_{out_suffix}.txt" if out_suffix else f"{workdir}/stdout.txt"
+        err_path = f"{workdir}/stderr_{err_suffix}.txt" if err_suffix else f"{workdir}/stderr.txt"
+        if os.path.exists(out_path):
+            with open(out_path) as f:
+                build_stdout = f.read()
+            if os.path.exists(err_path):
+                with open(err_path) as f:
+                    build_stderr = f.read()
+            break
+
+    if build_stdout is None:
+        return None  # No usable stdout
+
+    all_stdout.append(build_stdout)
+    tokens_b, steps_b = parse_metrics(build_stdout)
+    for k in all_tokens:
+        all_tokens[k] += tokens_b[k]
+    all_steps += steps_b
+
+    # Read explore stdout if this system uses it
+    if sys_cfg["use_explore"]:
+        for suffix in ["explore", ""]:
+            explore_stdout_path = f"{workdir}/stdout_{suffix}.txt" if suffix else f"{workdir}/stdout.txt"
+            if os.path.exists(explore_stdout_path):
+                with open(explore_stdout_path) as f:
+                    explore_stdout = f.read()
+                all_stdout.append(explore_stdout)
+                tokens_e, steps_e = parse_metrics(explore_stdout)
+                for k in all_tokens:
+                    all_tokens[k] += tokens_e[k]
+                all_steps += steps_e
+                explore_text = extract_text_output(explore_stdout)
+                subagent_outputs["explore"] = explore_text[:4000]
+                break
+
+    # Read general stdout if this system uses it
+    if sys_cfg["use_general"]:
+        for suffix in ["general", ""]:
+            general_stdout_path = f"{workdir}/stdout_{suffix}.txt" if suffix else f"{workdir}/stdout.txt"
+            if os.path.exists(general_stdout_path):
+                with open(general_stdout_path) as f:
+                    general_stdout = f.read()
+                all_stdout.append(general_stdout)
+                tokens_g, steps_g = parse_metrics(general_stdout)
+                for k in all_tokens:
+                    all_tokens[k] += tokens_g[k]
+                all_steps += steps_g
+                general_text = extract_text_output(general_stdout)
+                subagent_outputs["general"] = general_text[:2000]
+                break
+
+    # Read table stdout if this system uses it
+    if sys_cfg["use_table"]:
+        for suffix in ["table", ""]:
+            table_stdout_path = f"{workdir}/stdout_{suffix}.txt" if suffix else f"{workdir}/stdout.txt"
+            if os.path.exists(table_stdout_path):
+                with open(table_stdout_path) as f:
+                    table_stdout = f.read()
+                all_stdout.append(table_stdout)
+                tokens_t, steps_t = parse_metrics(table_stdout)
+                for k in all_tokens:
+                    all_tokens[k] += tokens_t[k]
+                all_steps += steps_t
+                table_text = extract_text_output(table_stdout)
+                subagent_outputs["table"] = table_text[:2000]
+                break
+
+    # Estimate runtime from file timestamps (rough)
+    if os.path.exists(f"{workdir}/task_info.json"):
+        total_runtime = os.path.getmtime(stdout_build_path) - os.path.getmtime(f"{workdir}/task_info.json")
+
+    # Evaluate
+    combined_stdout = "\n".join(all_stdout)
+    answer = extract_answer(combined_stdout, build_stderr)
+    success, eval_detail = evaluate(answer, task["answer"], task["answer_aliases"])
+
+    # M1
+    explore_text = subagent_outputs.get("explore", "")
+    m1_recall, m1_found_paras = compute_m1_evidence_recall(explore_text, task)
+
+    # M5
+    used_subagents = sys_cfg["use_explore"] or sys_cfg["use_general"] or sys_cfg["use_table"]
+    m5_explore_found_build_failed = compute_m5_explore_found_build_failed({
+        "used_subagents": used_subagents,
+        "m1_found_paras": m1_found_paras,
+        "success": success,
+    })
+
+    subagent_count = sum(1 for v in [sys_cfg["use_explore"], sys_cfg["use_general"], sys_cfg["use_table"]] if v)
+
+    entry = {
+        "run_id": run_id,
+        "task_id": task["task_id"],
+        "system": system_key,
+        "budget_setting": "equal_generation",
+        "seed": 0,
+        "model": "qwen35-9b",
+        "difficulty_bucket": task["difficulty_bucket"],
+        "num_hops": task["num_hops"],
+        "question": task["question"],
+        "gold_answer": task["answer"],
+        "predicted_answer": answer,
+        "success": success,
+        "eval_detail": eval_detail,
+        "token_usage": {
+            "input_tokens": {"total": all_tokens["input"]},
+            "output_tokens": {"total": all_tokens["output"]},
+            "total_tokens": all_tokens["total"],
+        },
+        "runtime_sec": max(total_runtime, 0),
+        "steps": all_steps,
+        "subagent_calls_total": subagent_count,
+        "used_subagents": used_subagents,
+        "exit_code": 0,
+        "timeout": False,
+        "m1_evidence_recall": m1_recall,
+        "m1_found_paras": m1_found_paras,
+        "m1_gold_paras": [p["idx"] for p in task_data.get("paragraphs", []) if p.get("is_supporting", False)],
+        "m2_extra_paras": [],
+        "m3_integration_error": None,
+        "m4_tokens_per_correct": None,
+        "m5_explore_found_build_failed": m5_explore_found_build_failed,
+        "failure_analysis": {
+            "failed": not success,
+            "primary_failure_type": "none" if success else "other",
+            "failure_tags": [],
+            "notes": "(rebuilt from existing run)"
+        }
+    }
+    return entry
+
+
 def main():
     tasks = load_tasks()
     resume_mode = "--resume" in sys.argv
@@ -788,8 +947,8 @@ def main():
     print(f"Harness: {len(tasks)} tasks × {len(systems_to_run)} systems = {len(tasks)*len(systems_to_run)} runs")
     sys.stdout.flush()
 
-    # Load existing runs for resume deduplication
-    existing_runs = {}
+    # Two-level resume: (1) runs.jsonl entries, (2) existing run directories
+    existing_entries = {}
     if resume_mode:
         log_file = f"{OUTPUT_ROOT}/runs.jsonl"
         if os.path.exists(log_file):
@@ -797,27 +956,38 @@ def main():
                 for line in f:
                     if line.strip():
                         r = json.loads(line)
-                        existing_runs[(r["task_id"], r["system"])] = r
-            existing_count = len(existing_runs)
-            print(f"RESUME MODE: found {existing_count} existing runs, will skip completed ones")
+                        existing_entries[(r["task_id"], r["system"])] = r
+            print(f"RESUME: found {len(existing_entries)} entries in runs.jsonl")
 
     results = []
     for i, task in enumerate(tasks):
         for j, system_key in enumerate(systems_to_run):
             idx = i * len(systems_to_run) + j + 1
             total = len(tasks) * len(systems_to_run)
+            key = (task["task_id"], system_key)
             print(f"\n[{idx}/{total}] {task['task_id']} | {system_key} | {task['num_hops']}hop")
             sys.stdout.flush()
 
-            # Resume: skip if already exists
-            if resume_mode and (task["task_id"], system_key) in existing_runs:
-                entry = existing_runs[(task["task_id"], system_key)]
+            # Resume level 1: runs.jsonl entry
+            if resume_mode and key in existing_entries:
+                entry = existing_entries[key]
                 status = "✅" if entry["success"] else "❌"
-                print(f"  ⏭️  SKIP (already exists) | {status} Answer: '{entry['predicted_answer'][:60]}' | "
+                print(f"  ⏭️  SKIP (runs.jsonl) | {status} Answer: '{str(entry.get('predicted_answer',''))[:60]}' | "
                       f"{entry['token_usage']['total_tokens']} tok")
                 results.append(entry)
                 continue
 
+            # Resume level 2: existing run directory with stdout
+            if resume_mode:
+                entry = rebuild_from_existing_run(task, system_key)
+                if entry is not None:
+                    status = "✅" if entry["success"] else "❌"
+                    print(f"  ⏭️  SKIP (rebuilt from dir) | {status} Answer: '{entry['predicted_answer'][:60]}' | "
+                          f"{entry['token_usage']['total_tokens']} tok")
+                    results.append(entry)
+                    continue
+
+            # Fresh run
             entry = run_single(task, system_key)
 
             status = "✅" if entry["success"] else "❌"
