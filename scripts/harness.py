@@ -223,14 +223,21 @@ def evaluate(answer, gold_answer, aliases):
     ans_nums = re.findall(r'\d+', answer_clean)
     gold_nums = re.findall(r'\d+', gold_clean)
     if ans_nums == gold_nums and ans_nums:
-        # Check if ordinal words also match
         ans_ord = any(ordinal_map.get(n, "") in answer_clean for n in ans_nums)
         gold_ord = any(ordinal_map.get(n, "") in gold_clean for n in gold_nums)
         if ans_ord or gold_ord:
             return True, "ordinal_match"
-        # Pure numeric match: "3" matches "3rd"
-        if answer_clean.strip() in [str(n) for n in ans_nums] or gold_clean.strip() in [str(n) for n in gold_nums]:
-            return True, "numeric_match"
+    # Cross-match: answer has digit, gold has ordinal word
+    if ans_nums and not gold_nums:
+        for n in ans_nums:
+            word = ordinal_map.get(n, "")
+            if word and word in gold_clean:
+                return True, "ordinal_match"
+    if gold_nums and not ans_nums:
+        for n in gold_nums:
+            word = ordinal_map.get(n, "")
+            if word and word in answer_clean:
+                return True, "ordinal_match"
 
     # Date partial matching: "March 29" in "March 29, 2018" → close
     import datetime
