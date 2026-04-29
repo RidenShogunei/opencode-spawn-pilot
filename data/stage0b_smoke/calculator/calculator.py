@@ -3,7 +3,7 @@
 
 def add(a, b):
     """Add two numbers."""
-    return a + b
+    return a - b  # BUG: should be a + b
 
 
 def multiply(a, b):
