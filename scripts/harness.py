@@ -851,7 +851,10 @@ def rebuild_from_existing_run(task, system_key):
 
     # Estimate runtime from file timestamps (rough)
     if os.path.exists(f"{workdir}/task_info.json"):
-        total_runtime = os.path.getmtime(stdout_build_path) - os.path.getmtime(f"{workdir}/task_info.json")
+        out_path = f"{workdir}/stdout_build.txt"
+        if not os.path.exists(out_path):
+            out_path = f"{workdir}/stdout.txt"
+        total_runtime = os.path.getmtime(out_path) - os.path.getmtime(f"{workdir}/task_info.json")
 
     # Evaluate
     combined_stdout = "\n".join(all_stdout)
@@ -860,7 +863,7 @@ def rebuild_from_existing_run(task, system_key):
 
     # M1
     explore_text = subagent_outputs.get("explore", "")
-    m1_recall, m1_found_paras = compute_m1_evidence_recall(explore_text, task)
+    m1_recall, m1_found_paras = compute_m1_evidence_recall(explore_text, task_data)
 
     # M5
     used_subagents = sys_cfg["use_explore"] or sys_cfg["use_general"] or sys_cfg["use_table"]
@@ -1001,10 +1004,19 @@ def main():
     # Post-hoc M2, M3, M4
     m3_by_system, m4_by_system = compute_post_hoc_metrics(results)
 
-    # Overwrite runs.jsonl with enriched entries
+    # Merge with existing runs.jsonl entries (don't overwrite — preserve other systems)
     log_file = f"{OUTPUT_ROOT}/runs.jsonl"
+    merged = {}
+    if os.path.exists(log_file):
+        with open(log_file) as f:
+            for line in f:
+                if line.strip():
+                    r = json.loads(line)
+                    merged[(r["task_id"], r["system"])] = r
+    for r in results:
+        merged[(r["task_id"], r["system"])] = r
     with open(log_file, "w") as f:
-        for r in results:
+        for r in merged.values():
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
     # Print summary
