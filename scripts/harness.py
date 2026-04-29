@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Stage 1A Harness: Multi-hop QA with OpenCode + vLLM
-Fixed: properly handle OpenCode JSON output format."""
+v2: Forced subagent spawning — Explore/General run as separate OpenCode processes."""
 
 import json
 import os
@@ -18,48 +18,62 @@ OPENCODE_BIN = "/home/jinxu/.opencode/bin/opencode"
 
 SYSTEMS = {
     "build_only": {
-        "agent": "build",
-        "subagent_instruction": (
-            "IMPORTANT: Do NOT use any subagents (no Explore, no General, no Task). "
-            "Complete this task yourself using only direct tool calls (grep, read)."
-        ),
-        "constraint_note": "no_subagents"
+        "use_explore": False,
+        "use_general": False,
     },
     "build_explore": {
-        "agent": "build",
-        "subagent_instruction": (
-            "You MAY use the Explore subagent to search for and read relevant documents. "
-            "Explore is read-only and helps find relevant paragraphs. "
-            "You are responsible for integrating all information and providing the final answer."
-        ),
-        "constraint_note": "explore_allowed"
+        "use_explore": True,
+        "use_general": False,
     },
     "build_explore_general": {
-        "agent": "build",
-        "subagent_instruction": (
-            "You MAY use Explore and General subagents. "
-            "Explore: find relevant documents (read-only). "
-            "General: verify findings, compare hypotheses, or check reasoning. "
-            "You are responsible for integrating all findings and providing the final answer."
-        ),
-        "constraint_note": "all_subagents_allowed"
-    }
+        "use_explore": True,
+        "use_general": True,
+    },
 }
 
-PROMPT_TEMPLATE = """TASK: Answer a multi-hop question by searching and reading documents.
+EXPLORE_PROMPT = """You are an Explore subagent. Your job is to find relevant information in documents.txt.
+
+QUESTION TO ANSWER: {question}
+NUM HOPS: {num_hops}
+
+INSTRUCTIONS:
+1. Use grep to search documents.txt for relevant keywords
+2. Use read to read specific paragraphs
+3. Report ALL relevant paragraphs with their IDs and key facts
+4. Trace the chain of facts across paragraphs ({num_hops}-hop question)
+5. End with: FINDINGS_COMPLETE
+
+Begin now."""
+
+GENERAL_PROMPT = """You are a General verification subagent. Review the Explore subagent's findings.
+
+ORIGINAL QUESTION: {question}
+
+EXPLORE_FINDINGS:
+{explore_output}
+
+INSTRUCTIONS:
+1. Check if any relevant paragraphs were missed
+2. Verify the logical chain across paragraphs
+3. Identify any gaps or contradictions
+4. Propose additional searches if needed
+5. End with: REVIEW_COMPLETE
+
+Begin now."""
+
+BUILD_PROMPT = """TASK: Answer a multi-hop question using findings from subagents.
 
 QUESTION: {question}
 
-RESOURCES:
-- documents.txt: {num_paras} Wikipedia-style paragraphs. Each starts with "--- PARAGRAPH N ---".
+{subagent_context}
 
-PROCESS:
-1. Use `grep` to search for keywords in documents.txt
-2. Use `read` to read documents.txt to find specific paragraphs
-3. Chain information across paragraphs ({num_hops}-hop question)
+INSTRUCTIONS:
+1. Read the subagent findings above
+2. If needed, verify by reading specific paragraphs from documents.txt
+3. Chain the information across paragraphs ({num_hops}-hop question)
 4. When ready, output exactly on its own line: ANSWER: <your answer>
 
-{subagent_instruction}
+IMPORTANT: Do NOT call any subagents. Use only direct tool calls (grep, read).
 
 Begin now."""
 
@@ -99,28 +113,19 @@ def prepare_workdir(run_id, task):
     return workdir, task_data
 
 
-def make_prompt(task, system_key):
-    sys_cfg = SYSTEMS[system_key]
-    return PROMPT_TEMPLATE.format(
-        question=task["question"],
-        num_paras=task["num_paragraphs"],
-        num_hops=task["num_hops"],
-        subagent_instruction=sys_cfg["subagent_instruction"]
-    )
-
-
-def run_opencode(workdir, prompt, timeout=300):
-    """Run OpenCode, writing stderr to file to avoid pipe deadlock"""
+def run_opencode(workdir, prompt, agent="build", timeout=300, log_suffix=""):
+    """Run OpenCode with specified agent, return stdout and stderr."""
+    suffix = f"_{log_suffix}" if log_suffix else ""
     cmd = [
         OPENCODE_BIN, "run",
-        "--agent", "build",
+        "--agent", agent,
         "--dir", workdir,
         "--format", "json",
         "--print-logs",
         prompt
     ]
 
-    stderr_file = f"{workdir}/opencode_stderr_raw.txt"
+    stderr_file = f"{workdir}/opencode_stderr_raw{suffix}.txt"
 
     start = time.time()
     with open(stderr_file, "w") as stderr_f:
@@ -139,7 +144,6 @@ def run_opencode(workdir, prompt, timeout=300):
             elapsed = time.time() - start
             timeout_flag = False
 
-    # Read stderr from file
     with open(stderr_file) as f:
         stderr = f.read()
 
@@ -148,14 +152,29 @@ def run_opencode(workdir, prompt, timeout=300):
             "timeout": timeout_flag}
 
 
+def extract_text_output(stdout):
+    """Extract all text parts from OpenCode JSON output."""
+    texts = []
+    for line in (stdout or "").split('\n'):
+        line = line.strip()
+        if not line.startswith('{'):
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if data.get("type") == "text":
+            text = data.get("text") or data.get("part", {}).get("text", "")
+            texts.append(text)
+    return "\n".join(texts)
+
+
 def extract_answer(stdout, stderr):
-    """Extract final answer from OpenCode output. Checks JSON text parts in both stdout and stderr."""
-    # Check both stdout and stderr JSON lines for text parts containing ANSWER:
+    """Extract final answer from OpenCode output."""
     combined = (stdout or "") + "\n" + (stderr or "")
     for line in combined.split('\n'):
         line = line.strip()
-        if not line.startswith('{'):
-            # Also check raw lines (for non-JSON output)
+        if not line.startswith('{') and line:
             m = re.match(r'^ANSWER:\s*(.+?)\s*$', line, re.IGNORECASE)
             if m:
                 return m.group(1).strip().rstrip('.')
@@ -170,7 +189,6 @@ def extract_answer(stdout, stderr):
             if m:
                 return m.group(1).strip().rstrip('.')
 
-    # Fallback: last text part from either stream
     last_text = ""
     for line in combined.split('\n'):
         line = line.strip()
@@ -184,12 +202,12 @@ def extract_answer(stdout, stderr):
             last_text = data.get("text") or data.get("part", {}).get("text", "")
     if last_text:
         return last_text.strip().split('\n')[-1].rstrip('.')
-
     return ""
 
 
 def evaluate(answer, gold_answer, aliases):
-    answer_clean = answer.strip().lower().rstrip('.')
+    # Clean markdown formatting
+    answer_clean = re.sub(r'\*+', '', answer).strip().lower().rstrip('.')
     gold_clean = gold_answer.strip().lower().rstrip('.')
 
     if answer_clean == gold_clean:
@@ -210,9 +228,8 @@ def evaluate(answer, gold_answer, aliases):
 
 
 def parse_metrics(stdout):
-    """Parse token usage and subagent calls from stdout JSON logs"""
+    """Parse token usage from stdout JSON logs."""
     tokens = {"input": 0, "output": 0, "total": 0}
-    subagent_calls = 0
     steps = 0
 
     for line in (stdout or "").split('\n'):
@@ -224,21 +241,14 @@ def parse_metrics(stdout):
         except json.JSONDecodeError:
             continue
 
-        t = data.get("type", "")
-        if t == "step_finish":
+        if data.get("type") in ("step_finish", "step-finish"):
             steps += 1
             tok = data.get("part", {}).get("tokens", {})
             tokens["input"] += tok.get("input", 0)
             tokens["output"] += tok.get("output", 0)
             tokens["total"] += tok.get("total", 0)
 
-        if t == "step_start":
-            agent_info = data.get("part", {}).get("agent", "")
-            if agent_info in ("explore", "general"):
-                subagent_calls += 1
-                tokens["output"] += 46  # approximate per-step overhead
-
-    return tokens, subagent_calls, steps
+    return tokens, steps
 
 
 def save_run_log(run_entry):
@@ -248,25 +258,118 @@ def save_run_log(run_entry):
 
 
 def run_single(task, system_key):
-    """Run a single task+system combo, return result"""
+    """Run a single task+system combo with forced subagent spawning."""
     run_id = f"{task['task_id']}__{system_key}__s0"
     workdir, task_data = prepare_workdir(run_id, task)
-    prompt = make_prompt(task, system_key)
+    sys_cfg = SYSTEMS[system_key]
 
-    with open(f"{workdir}/prompt.txt", "w") as f:
-        f.write(prompt)
+    total_runtime = 0
+    all_stdout = []
+    all_tokens = {"input": 0, "output": 0, "total": 0}
+    all_steps = 0
+    subagent_outputs = {}
 
-    result = run_opencode(workdir, prompt, timeout=300)
+    # ---- Phase 1: Run Explore subagent (if enabled) ----
+    if sys_cfg["use_explore"]:
+        explore_prompt = EXPLORE_PROMPT.format(
+            question=task["question"],
+            num_hops=task["num_hops"]
+        )
+        with open(f"{workdir}/prompt_explore.txt", "w") as f:
+            f.write(explore_prompt)
 
-    with open(f"{workdir}/stdout.txt", "w") as f:
+        result = run_opencode(workdir, explore_prompt, agent="explore",
+                              timeout=120, log_suffix="explore")
+        total_runtime += result["runtime_sec"]
+
+        explore_text = extract_text_output(result["stdout"])
+
+        with open(f"{workdir}/stdout_explore.txt", "w") as f:
+            f.write(result["stdout"])
+        with open(f"{workdir}/stderr_explore.txt", "w") as f:
+            f.write(result["stderr"])
+
+        tokens_e, steps_e = parse_metrics(result["stdout"])
+        all_tokens["input"] += tokens_e["input"]
+        all_tokens["output"] += tokens_e["output"]
+        all_tokens["total"] += tokens_e["total"]
+        all_steps += steps_e
+        all_stdout.append(result["stdout"])
+
+        subagent_outputs["explore"] = explore_text[:4000]  # cap to avoid overflow
+
+    # ---- Phase 2: Run General subagent (if enabled) ----
+    if sys_cfg["use_general"]:
+        general_prompt = GENERAL_PROMPT.format(
+            question=task["question"],
+            explore_output=subagent_outputs.get("explore", "(Explore not run)")
+        )
+        with open(f"{workdir}/prompt_general.txt", "w") as f:
+            f.write(general_prompt)
+
+        result = run_opencode(workdir, general_prompt, agent="general",
+                              timeout=120, log_suffix="general")
+        total_runtime += result["runtime_sec"]
+
+        general_text = extract_text_output(result["stdout"])
+
+        with open(f"{workdir}/stdout_general.txt", "w") as f:
+            f.write(result["stdout"])
+        with open(f"{workdir}/stderr_general.txt", "w") as f:
+            f.write(result["stderr"])
+
+        tokens_g, steps_g = parse_metrics(result["stdout"])
+        all_tokens["input"] += tokens_g["input"]
+        all_tokens["output"] += tokens_g["output"]
+        all_tokens["total"] += tokens_g["total"]
+        all_steps += steps_g
+        all_stdout.append(result["stdout"])
+
+        subagent_outputs["general"] = general_text[:2000]
+
+    # ---- Phase 3: Run Build with subagent context ----
+    context_parts = []
+    if "explore" in subagent_outputs:
+        context_parts.append(f"=== EXPLORE SUBAGENT FINDINGS ===\n{subagent_outputs['explore']}")
+    if "general" in subagent_outputs:
+        context_parts.append(f"=== GENERAL SUBAGENT REVIEW ===\n{subagent_outputs['general']}")
+
+    subagent_context = "\n\n".join(context_parts) if context_parts else \
+        "No subagent findings available. Search documents.txt yourself.\n" \
+        "IMPORTANT: Do NOT use any subagents. Use only direct tool calls (grep, read)."
+
+    build_prompt = BUILD_PROMPT.format(
+        question=task["question"],
+        subagent_context=subagent_context,
+        num_hops=task["num_hops"]
+    )
+
+    with open(f"{workdir}/prompt_build.txt", "w") as f:
+        f.write(build_prompt)
+
+    result = run_opencode(workdir, build_prompt, agent="build",
+                          timeout=180, log_suffix="build")
+    total_runtime += result["runtime_sec"]
+
+    with open(f"{workdir}/stdout_build.txt", "w") as f:
         f.write(result["stdout"])
-    with open(f"{workdir}/stderr.txt", "w") as f:
+    with open(f"{workdir}/stderr_build.txt", "w") as f:
         f.write(result["stderr"])
 
-    answer = extract_answer(result["stdout"], result["stderr"])
+    tokens_b, steps_b = parse_metrics(result["stdout"])
+    all_tokens["input"] += tokens_b["input"]
+    all_tokens["output"] += tokens_b["output"]
+    all_tokens["total"] += tokens_b["total"]
+    all_steps += steps_b
+    all_stdout.append(result["stdout"])
+
+    # ---- Evaluate ----
+    combined_stdout = "\n".join(all_stdout)
+    answer = extract_answer(combined_stdout, result["stderr"])
     success, eval_detail = evaluate(answer, task["answer"], task["answer_aliases"])
 
-    tokens, subagent_calls, steps = parse_metrics(result["stdout"])
+    subagent_count = (1 if sys_cfg["use_explore"] else 0) + \
+                     (1 if sys_cfg["use_general"] else 0)
 
     entry = {
         "run_id": run_id,
@@ -283,13 +386,13 @@ def run_single(task, system_key):
         "success": success,
         "eval_detail": eval_detail,
         "token_usage": {
-            "input_tokens": {"total": tokens["input"]},
-            "output_tokens": {"total": tokens["output"]},
-            "total_tokens": tokens["total"]
+            "input_tokens": {"total": all_tokens["input"]},
+            "output_tokens": {"total": all_tokens["output"]},
+            "total_tokens": all_tokens["total"]
         },
-        "runtime_sec": result["runtime_sec"],
-        "steps": steps,
-        "subagent_calls_total": subagent_calls,
+        "runtime_sec": total_runtime,
+        "steps": all_steps,
+        "subagent_calls_total": subagent_count,
         "exit_code": result.get("exit_code", -1),
         "timeout": result.get("timeout", False),
         "failure_analysis": {
@@ -307,19 +410,23 @@ def run_single(task, system_key):
 def main():
     tasks = load_tasks()
 
-    # Allow running a subset for quick test
+    # Allow running a subset
+    systems_to_run = list(SYSTEMS.keys())
     if len(sys.argv) > 1:
         subset = sys.argv[1]
         if subset == "test":
-            tasks = tasks[:1]  # just first task
+            tasks = tasks[:1]
             print("TEST MODE: 1 task")
         elif subset == "s1":
-            # Just build_only for quick test
             systems_to_run = ["build_only"]
+        elif subset == "2hop":
+            tasks = [t for t in tasks if t["num_hops"] == 2]
+        elif subset == "3hop":
+            tasks = [t for t in tasks if t["num_hops"] == 3]
+        elif subset == "4hop":
+            tasks = [t for t in tasks if t["num_hops"] == 4]
         else:
             tasks = [t for t in tasks if t["task_id"] == subset]
-
-    systems_to_run = ["build_only", "build_explore", "build_explore_general"]
 
     print(f"Harness: {len(tasks)} tasks × {len(systems_to_run)} systems = {len(tasks)*len(systems_to_run)} runs")
     sys.stdout.flush()
@@ -336,7 +443,8 @@ def main():
 
             status = "✅" if entry["success"] else "❌"
             print(f"  {status} Answer: '{entry['predicted_answer'][:60]}' (gold: '{entry['gold_answer']}') | "
-                  f"{entry['token_usage']['total_tokens']} tok | {entry['runtime_sec']:.0f}s")
+                  f"{entry['token_usage']['total_tokens']} tok | {entry['runtime_sec']:.0f}s | "
+                  f"{entry['subagent_calls_total']} subagents")
             sys.stdout.flush()
             results.append(entry)
 
