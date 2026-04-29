@@ -1,0 +1,50 @@
+{
+  "build_only": {
+    "success_rate": 0.4,
+    "avg_tokens": 167118.2,
+    "m1_avg_recall": 0.0,
+    "m3_count": 0,
+    "m5_count": 0,
+    "per_hop": {
+      "2": 0.3333333333333333,
+      "3": 0.3333333333333333,
+      "4": 0.5
+    }
+  },
+  "build_explore": {
+    "success_rate": 0.7,
+    "avg_tokens": 130036.9,
+    "m1_avg_recall": 0.6666666666666666,
+    "m3_count": 10,
+    "m5_count": 1,
+    "per_hop": {
+      "2": 0.6666666666666666,
+      "3": 0.6666666666666666,
+      "4": 0.75
+    }
+  },
+  "build_explore_general": {
+    "success_rate": 0.6,
+    "avg_tokens": 126147.6,
+    "m1_avg_recall": 0.6416666666666666,
+    "m3_count": 10,
+    "m5_count": 3,
+    "per_hop": {
+      "2": 0.6666666666666666,
+      "3": 0.3333333333333333,
+      "4": 0.75
+    }
+  },
+  "build_explore_table": {
+    "success_rate": 0.6,
+    "avg_tokens": 112726.9,
+    "m1_avg_recall": 0.6333333333333333,
+    "m3_count": 10,
+    "m5_count": 3,
+    "per_hop": {
+      "2": 0.6666666666666666,
+      "3": 0.3333333333333333,
+      "4": 0.75
+    }
+  }
+}

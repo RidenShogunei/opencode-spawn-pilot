@@ -1,0 +1,38 @@
+TASK: Answer a multi-hop question using findings from subagents.
+
+QUESTION: In what region of Phu Luong's country is John Phan's birthplace located?
+
+=== EXPLORE SUBAGENT FINDINGS ===
+Based on my search, I found the following:
+
+**PARAGRAPH 12:** John Phan (born October 10, 1974 in Da Nang, Vietnam) is a Vietnamese-American professional poker player based in Stockton, California.
+
+**PARAGRAPH 0:** Mueang Phan () is a village and "tambon" (subdistrict) of Phan District, in Chiang Rai Province, Thailand.
+
+There is no direct connection showing what region contains Da Nang, Vietnam in the search results. Looking for "Da Nang":
+## Chain of Facts (3-hop):
+
+1. **PARAGRAPH 12:** John Phan's birthplace is **Da Nang, Vietnam**.
+2. **PARAGRAPH 18:** The **South Central Coast** region of Vietnam consists of the independent municipality of **Đà Nẵng** (Da Nang).
+
+**Answer:** John Phan's birthplace (Da Nang) is located in the **South Central Coast** region of Vietnam.
+
+**FINDINGS_COMPLETE**
+
+=== STRUCTURED EVIDENCE TABLE ===
+| Paragraph ID | Key Fact | Connects To |
+|--------------|----------|-------------|
+| 12 | John Phan was born on October 10, 1974 in Da Nang, Vietnam | hop 1 |
+| 18 | South Central Coast region of Vietnam includes the municipality of Đà Nẵng (Da Nang) | hop 2 → hop 3 → ANSWER |
+
+TABLE_COMPLETE
+
+INSTRUCTIONS:
+1. Read the subagent findings above carefully
+2. If needed, verify by reading specific paragraphs from documents.txt
+3. Chain the information across paragraphs (3-hop question)
+4. When ready, output exactly on its own line: ANSWER: <your answer>
+
+IMPORTANT: Do NOT call any subagents. Use only direct tool calls (grep, read).
+
+Begin now.

@@ -1,0 +1,35 @@
+TASK: Answer a multi-hop question using findings from subagents.
+
+QUESTION: Who is the owner of the record label that the performer of Better Than Me is signed with?
+
+=== EXPLORE SUBAGENT FINDINGS ===
+## Chain of Facts (3-hop):
+
+1. **Paragraph 0**: "Better Than Me" is performed by **Terry Dexter**.
+
+2. **Paragraph 7**: Terry Dexter's debut album was released via **Warner Bros. Records**.
+
+3. **Paragraph 19**: Warner Bros. Records was founded by **James Conkling**.
+
+**Answer**: The owner of the record label (Warner Bros. Records) that Terry Dexter (the performer of "Better Than Me") is signed with is **James Conkling**.
+
+FINDINGS_COMPLETE
+
+=== STRUCTURED EVIDENCE TABLE ===
+| Paragraph ID | Key Fact | Connects To |
+|--------------|----------|-------------|
+| 0 | \"Better Than Me\" is performed by Terry Dexter | hop 1 |
+| 7 | Terry's debut album was released via Warner Bros. Records | hop 2 |
+| 19 | Warner Bros. Records was founded by James Conkling | hop 3 → ANSWER |
+
+TABLE_COMPLETE
+
+INSTRUCTIONS:
+1. Read the subagent findings above carefully
+2. If needed, verify by reading specific paragraphs from documents.txt
+3. Chain the information across paragraphs (3-hop question)
+4. When ready, output exactly on its own line: ANSWER: <your answer>
+
+IMPORTANT: Do NOT call any subagents. Use only direct tool calls (grep, read).
+
+Begin now.
