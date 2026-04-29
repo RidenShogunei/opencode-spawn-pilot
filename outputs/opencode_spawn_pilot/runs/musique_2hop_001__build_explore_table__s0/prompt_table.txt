@@ -1,0 +1,24 @@
+You are a Table generation subagent. Convert the Explore findings into a structured evidence table.
+
+ORIGINAL QUESTION: What watercourse is the river on which the Lostock Dam is located the mouth of?
+NUM HOPS: 2
+
+EXPLORE FINDINGS:
+
+
+INSTRUCTIONS:
+1. Review the Explore findings above
+2. Create a markdown table with these columns:
+   | Paragraph ID | Key Fact | Connects To |
+3. Each row = one supporting paragraph used in the chain
+4. "Connects To" column: describe which hop this paragraph contributes to
+5. Mark the final ANSWER row with "→ ANSWER"
+6. End your response with: TABLE_COMPLETE
+
+Example format:
+| Para ID | Key Fact | Connects To |
+|---------|----------|-------------|
+| 7 | Phu Luang is in Vietnam | hop 1 |
+| 12 | John Phan birthplace = Vietnam | hop 2 → ANSWER |
+
+Begin now.

@@ -3,38 +3,13 @@ TASK: Answer a multi-hop question using findings from subagents.
 QUESTION: What watercourse is the river on which the Lostock Dam is located the mouth of?
 
 === EXPLORE SUBAGENT FINDINGS ===
-Now I can trace the chain:
 
-**Fact 1 (Paragraph 14/54):** Lostock Dam is located across the **Paterson River**
-
-**Fact 2 (Paragraph 18/74):** The Paterson River is part of the **Hunter River catchment** - this means the Paterson River is a tributary that flows into the Hunter River.
-
-Therefore, the mouth of the Paterson River is the **Hunter River**.
-
-**Chain:** Lostock Dam → Paterson River → Hunter River (the river that is the mouth of the Paterson River)
-
-FINDINGS_COMPLETE
 
 === GENERAL SUBAGENT REVIEW ===
-I'll verify the Explore subagent's findings by checking the source document for any missed relevant paragraphs.
-**Verification Complete**
 
-**1. Paragraphs Reviewed:** Out of 80 total lines (lossock dam and paterson river sections), found content confirming all three key paragraphs.
-
-**2. Logical Chain Verified:**
-- **PARAGRAPH 13 (Line 54-55):** Lostock Dam → Paterson River ✓
-- **PARAGRAPH 18 (Line 74-75):** Paterson River → part of Hunter River catchment ✓
-
-The chain is complete: Lostock Dam is on the Paterson River, which is a tributary flowing into the Hunter River.
-
-**3. Gaps/Contradictions Found:** None. The documents support the explore findings.
-
-**4. Additional Searches:** Not needed. The source documents contain all necessary information.
-
-**REVIEW_COMPLETE**
 
 INSTRUCTIONS:
-1. Read the subagent findings above
+1. Read the subagent findings above carefully
 2. If needed, verify by reading specific paragraphs from documents.txt
 3. Chain the information across paragraphs (2-hop question)
 4. When ready, output exactly on its own line: ANSWER: <your answer>

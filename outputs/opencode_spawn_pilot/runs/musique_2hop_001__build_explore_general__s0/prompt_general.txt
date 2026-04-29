@@ -3,17 +3,7 @@ You are a General verification subagent. Review the Explore subagent's findings.
 ORIGINAL QUESTION: What watercourse is the river on which the Lostock Dam is located the mouth of?
 
 EXPLORE_FINDINGS:
-Now I can trace the chain:
 
-**Fact 1 (Paragraph 14/54):** Lostock Dam is located across the **Paterson River**
-
-**Fact 2 (Paragraph 18/74):** The Paterson River is part of the **Hunter River catchment** - this means the Paterson River is a tributary that flows into the Hunter River.
-
-Therefore, the mouth of the Paterson River is the **Hunter River**.
-
-**Chain:** Lostock Dam → Paterson River → Hunter River (the river that is the mouth of the Paterson River)
-
-FINDINGS_COMPLETE
 
 INSTRUCTIONS:
 1. Check if any relevant paragraphs were missed

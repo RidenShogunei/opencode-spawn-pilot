@@ -345,7 +345,11 @@ def parse_metrics(stdout):
 
 def compute_m1_evidence_recall(explore_text, task_data):
     """M1: fraction of gold supporting paragraphs mentioned in Explore output."""
-    gold_paras = set(task_data.get("post_hoc_features", {}).get("supporting_paragraph_indices", []))
+    # Derive gold supporting paragraphs from is_supporting flag on each paragraph
+    gold_paras = set()
+    for para in task_data.get("paragraphs", []):
+        if para.get("is_supporting", False):
+            gold_paras.add(para["idx"])
     if not gold_paras:
         return 0.0, []
 
@@ -557,7 +561,7 @@ def run_single(task, system_key, all_runs_for_task=None):
         f.write(build_prompt)
 
     result = run_opencode(workdir, build_prompt, agent="build",
-                          timeout=180, log_suffix="build")
+                          timeout=600, log_suffix="build")
     total_runtime += result["runtime_sec"]
 
     with open(f"{workdir}/stdout_build.txt", "w") as f:
@@ -624,7 +628,7 @@ def run_single(task, system_key, all_runs_for_task=None):
         # ---- M1: Evidence Recall ----
         "m1_evidence_recall": m1_recall,
         "m1_found_paras": m1_found_paras,
-        "m1_gold_paras": task_data.get("post_hoc_features", {}).get("supporting_paragraph_indices", []),
+        "m1_gold_paras": [p["idx"] for p in task_data.get("paragraphs", []) if p.get("is_supporting", False)],
 
         # ---- M2: Missing-hop coverage (filled post-hoc) ----
         "m2_extra_paras": m2_extra_paras,

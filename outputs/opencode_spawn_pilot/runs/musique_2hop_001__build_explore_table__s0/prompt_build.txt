@@ -5,6 +5,9 @@ QUESTION: What watercourse is the river on which the Lostock Dam is located the 
 === EXPLORE SUBAGENT FINDINGS ===
 
 
+=== STRUCTURED EVIDENCE TABLE ===
+
+
 INSTRUCTIONS:
 1. Read the subagent findings above carefully
 2. If needed, verify by reading specific paragraphs from documents.txt
