@@ -1,0 +1,31 @@
+TASK: Answer a multi-hop question using findings from subagents.
+
+QUESTION: Along with Kenny G and the performer of Hello Tomorrow, what artist was featured on Smooth Jazz Stations?
+
+=== EXPLORE SUBAGENT FINDINGS ===
+Based on my analysis of documents.txt:
+
+**PARAGRAPH ID 35 (PARAGRAPH 8):**
+"For many years, artists like **George Benson, Kenny G** and **Dave Koz** had crossover hits that were played on both smooth jazz and soft AC stations."
+
+**PARAGRAPH ID 46-47 (PARAGRAPH 11):**
+"**Hello Tomorrow** is the ninth studio album by saxophone player **Dave Koz**."
+
+**CHAIN OF FACTS (2-hop):**
+1. Kenny G was featured on smooth jazz stations (from paragraph ID 35)
+2. Dave Koz is the performer of "Hello Tomorrow" (from paragraph ID 46)
+3. The third artist listed alongside Kenny G and Dave Koz on smooth jazz stations is **George Benson**
+
+**ANSWER: George Benson**
+
+FINDINGS_COMPLETE
+
+INSTRUCTIONS:
+1. Read the subagent findings above
+2. If needed, verify by reading specific paragraphs from documents.txt
+3. Chain the information across paragraphs (2-hop question)
+4. When ready, output exactly on its own line: ANSWER: <your answer>
+
+IMPORTANT: Do NOT call any subagents. Use only direct tool calls (grep, read).
+
+Begin now.

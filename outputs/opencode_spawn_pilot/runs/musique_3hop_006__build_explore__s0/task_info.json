@@ -1,0 +1,11 @@
+{
+  "run_id": "musique_3hop_006__build_explore__s0",
+  "task_id": "musique_3hop_006",
+  "question": "Who is the owner of the record label that the performer of Better Than Me is signed with?",
+  "answer": "Warner Music Group",
+  "answer_aliases": [
+    "Warner Music"
+  ],
+  "num_hops": 3,
+  "difficulty_bucket": "multi_file"
+}

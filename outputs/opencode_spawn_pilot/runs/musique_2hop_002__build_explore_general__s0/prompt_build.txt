@@ -1,0 +1,49 @@
+TASK: Answer a multi-hop question using findings from subagents.
+
+QUESTION: Where are the headquarters for the publisher of In the Shadow of Greatness?
+
+=== EXPLORE SUBAGENT FINDINGS ===
+Based on my research, here are the findings:
+
+**PARAGRAPH 4** - United States Naval Institute:
+- **Key fact**: The United States Naval Institute (USNI) is based in **Annapolis, Maryland**
+
+**PARAGRAPH 5** - In the Shadow of Greatness:
+- **Key fact**: "In the Shadow of Greatness" (2012) is a book written by 33 members of the United States Naval Academy Class of 2002 and **published by the United States Naval Institute**
+
+**Chain of facts (2-hop):**
+1. "In the Shadow of Greatness" was published by the United States Naval Institute (Paragraph 5)
+2. The United States Naval Institute is based in Annapolis, Maryland (Paragraph 4)
+
+**FINDINGS_COMPLETE**
+
+=== GENERAL SUBAGENT REVIEW ===
+REVIEW_COMPLETE
+
+**Verification Summary:**
+
+✅ **Chain of reasoning verified:**
+- Step 1: "In the Shadow of Greatness" → published by United States Naval Institute (confirmed in Findings Paragraph 5)
+- Step 2: United States Naval Institute → located in Annapolis, Maryland (confirmed in Findings Paragraph 4)
+- **Answer:** The headquarters are in **Annapolis, Maryland**
+
+✅ **Logical flow is sound and complete:**
+The 2-hop chain establishes the publisher and then the publisher's location correctly.
+
+✅ **No gaps or contradictions identified:**
+Both pieces of information are explicit and directly stated in the source paragraphs.
+
+✅ **No additional searches needed:**
+The task is fully solved with the available information. The publisher (USNI) and its headquarters location (Annapolis, Maryland) are clearly identified in the Explore findings.
+
+**Final Answer:** The United States Naval Institute, publisher of "In the Shadow of Greatness," is headquartered in Annapolis, Maryland.
+
+INSTRUCTIONS:
+1. Read the subagent findings above
+2. If needed, verify by reading specific paragraphs from documents.txt
+3. Chain the information across paragraphs (2-hop question)
+4. When ready, output exactly on its own line: ANSWER: <your answer>
+
+IMPORTANT: Do NOT call any subagents. Use only direct tool calls (grep, read).
+
+Begin now.

@@ -1,0 +1,9 @@
+{
+  "run_id": "musique_4hop_007__build_explore__s0",
+  "task_id": "musique_4hop_007",
+  "question": "Among the top five largest urban areas in the state Jacoby Shaddix' band formed in, where does the city Veoh's headquarters are located rank?",
+  "answer": "third-largest",
+  "answer_aliases": [],
+  "num_hops": 4,
+  "difficulty_bucket": "long_context"
+}

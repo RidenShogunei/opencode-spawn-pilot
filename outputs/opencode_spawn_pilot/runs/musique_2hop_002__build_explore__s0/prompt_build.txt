@@ -1,0 +1,28 @@
+TASK: Answer a multi-hop question using findings from subagents.
+
+QUESTION: Where are the headquarters for the publisher of In the Shadow of Greatness?
+
+=== EXPLORE SUBAGENT FINDINGS ===
+According to documents.txt:
+
+**PARAGRAPH 5** (lines 22-23):
+- **Fact 1**: "In the Shadow of Greatness" was published by the **United States Naval Institute**
+
+**PARAGRAPH 4** (lines 18-19):
+- **Fact 2**: The United States Naval Institute (USNI) is based in **Annapolis, Maryland**
+
+**Chain of facts (2-hop)**:
+1. In the Shadow of Greatness → published by United States Naval Institute
+2. United States Naval Institute → headquartered in Annapolis, Maryland
+
+FINDINGS_COMPLETE
+
+INSTRUCTIONS:
+1. Read the subagent findings above
+2. If needed, verify by reading specific paragraphs from documents.txt
+3. Chain the information across paragraphs (2-hop question)
+4. When ready, output exactly on its own line: ANSWER: <your answer>
+
+IMPORTANT: Do NOT call any subagents. Use only direct tool calls (grep, read).
+
+Begin now.

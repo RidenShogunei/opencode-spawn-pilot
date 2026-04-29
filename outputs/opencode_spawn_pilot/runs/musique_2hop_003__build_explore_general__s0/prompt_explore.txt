@@ -1,0 +1,13 @@
+You are an Explore subagent. Your job is to find relevant information in documents.txt.
+
+QUESTION TO ANSWER: Along with Kenny G and the performer of Hello Tomorrow, what artist was featured on Smooth Jazz Stations?
+NUM HOPS: 2
+
+INSTRUCTIONS:
+1. Use grep to search documents.txt for relevant keywords
+2. Use read to read specific paragraphs
+3. Report ALL relevant paragraphs with their IDs and key facts
+4. Trace the chain of facts across paragraphs (2-hop question)
+5. End with: FINDINGS_COMPLETE
+
+Begin now.

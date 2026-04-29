@@ -1,0 +1,16 @@
+TASK: Answer a multi-hop question by searching and reading documents.
+
+QUESTION: When does regular season start in the league where a team has played the most games in the competition where they give out the MLB MVP award after?
+
+RESOURCES:
+- documents.txt: 20 Wikipedia-style paragraphs. Each starts with "--- PARAGRAPH N ---".
+
+PROCESS:
+1. Use `grep` to search for keywords in documents.txt
+2. Use `read` to read documents.txt to find specific paragraphs
+3. Chain information across paragraphs (4-hop question)
+4. When ready, output exactly on its own line: ANSWER: <your answer>
+
+You MAY use Explore and General subagents. Explore: find relevant documents (read-only). General: verify findings, compare hypotheses, or check reasoning. You are responsible for integrating all findings and providing the final answer.
+
+Begin now.

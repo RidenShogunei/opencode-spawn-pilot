@@ -1,0 +1,9 @@
+{
+  "run_id": "musique_2hop_001__build_explore_general__s0",
+  "task_id": "musique_2hop_001",
+  "question": "What watercourse is the river on which the Lostock Dam is located the mouth of?",
+  "answer": "Hunter River",
+  "answer_aliases": [],
+  "num_hops": 2,
+  "difficulty_bucket": "local_readable"
+}

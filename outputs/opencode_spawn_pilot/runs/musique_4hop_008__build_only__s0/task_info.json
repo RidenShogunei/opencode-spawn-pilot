@@ -1,0 +1,9 @@
+{
+  "run_id": "musique_4hop_008__build_only__s0",
+  "task_id": "musique_4hop_008",
+  "question": "When does regular season start in the league where a team has played the most games in the competition where they give out the MLB MVP award after?",
+  "answer": "March 29, 2018",
+  "answer_aliases": [],
+  "num_hops": 4,
+  "difficulty_bucket": "long_context"
+}

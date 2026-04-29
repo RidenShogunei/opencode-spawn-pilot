@@ -1,0 +1,9 @@
+{
+  "run_id": "musique_3hop_005__build_only__s0",
+  "task_id": "musique_3hop_005",
+  "question": "When did the party that had majorities in Congress prior to the 1954 elections, take control of the organization that determines the rules of the US house and US senate?",
+  "answer": "January 2015",
+  "answer_aliases": [],
+  "num_hops": 3,
+  "difficulty_bucket": "multi_file"
+}
