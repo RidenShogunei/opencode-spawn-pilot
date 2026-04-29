@@ -543,19 +543,12 @@ def run_single(task, system_key, all_runs_for_task=None):
         "No subagent findings available. Search documents.txt yourself.\n" \
         "IMPORTANT: Do NOT use any subagents. Use only direct tool calls (grep, read)."
 
-    # S1 uses standalone prompt; S2/S3/S4 use build prompt with subagent context
-    if context_parts:
-        build_prompt = BUILD_PROMPT.format(
-            question=task["question"],
-            subagent_context=subagent_context,
-            num_hops=task["num_hops"]
-        )
-    else:
-        build_prompt = S1_PROMPT.format(
-            question=task["question"],
-            num_paragraphs=task.get("num_paragraphs", 20),
-            num_hops=task["num_hops"]
-        )
+    # All systems use BUILD_PROMPT (S1 gets generic "no subagent" context; what worked in Stage 1A)
+    build_prompt = BUILD_PROMPT.format(
+        question=task["question"],
+        subagent_context=subagent_context,
+        num_hops=task["num_hops"]
+    )
 
     with open(f"{workdir}/prompt_build.txt", "w") as f:
         f.write(build_prompt)

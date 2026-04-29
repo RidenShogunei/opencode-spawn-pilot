@@ -1,16 +1,16 @@
-TASK: Answer a multi-hop question by searching and reading documents.
+TASK: Answer a multi-hop question using findings from subagents.
 
 QUESTION: What watercourse is the river on which the Lostock Dam is located the mouth of?
 
-RESOURCES:
-- documents.txt: 20 Wikipedia-style paragraphs. Each starts with "--- PARAGRAPH N ---".
+No subagent findings available. Search documents.txt yourself.
+IMPORTANT: Do NOT use any subagents. Use only direct tool calls (grep, read).
 
-PROCESS:
-1. Use `grep` to search for keywords in documents.txt
-2. Use `read` to read documents.txt to find specific paragraphs
-3. Chain information across paragraphs (2-hop question)
+INSTRUCTIONS:
+1. Read the subagent findings above carefully
+2. If needed, verify by reading specific paragraphs from documents.txt
+3. Chain the information across paragraphs (2-hop question)
 4. When ready, output exactly on its own line: ANSWER: <your answer>
 
-IMPORTANT: Do NOT use any subagents (no Explore, no General, no Task). Complete this task yourself using only direct tool calls (grep, read).
+IMPORTANT: Do NOT call any subagents. Use only direct tool calls (grep, read).
 
 Begin now.
