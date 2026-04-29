@@ -1,9 +1,9 @@
 # OpenCode-Native Spawn Pilot Spec
 
-版本：v0.4
-上一版本：v0.3
-变更类型：Stage 0 验证后执行版修订
-主题：用本地 Qwen3.5-9B + vLLM 驱动 OpenCode，评测 single-agent vs subagent workflow，并为后续 spawn policy / RL 优化提供轨迹数据。
+版本：v0.5
+上一版本：v0.4
+变更类型：Stage 1B 机制验证实验设计修订
+主题：改原来的 90-run 扩展实验为 mechanism confirmation，关注 subagent 的 evidence recall / missing-hop coverage / integration error 等因果指标，而非只看 answer accuracy。
 
 ---
 
@@ -11,35 +11,30 @@
 
 | 版本        | 变更项           | 说明                                                               |
 | --------- | ------------- | ---------------------------------------------------------------- |
-| v0.3→v0.4 | §3 模型配置       | 固化 Stage 0 已验证的 vLLM / Qwen / OpenCode 配置                        |
-| v0.3→v0.4 | §3.4 部署方案     | 默认从双实例方案改为已验证的单实例方案：GPU 2，port 8010                              |
-| v0.3→v0.4 | §3.5 新增       | 明确 thinking 关闭、Hermes tool parser、OpenAI-compatible endpoint 配置  |
-| v0.3→v0.4 | §4 Stage 0 状态 | 将 Stage 0 infrastructure validation 标记为 completed                |
-| v0.3→v0.4 | §4.3          | 将模型能力预验证从 infrastructure validation 中拆出，避免概念混淆                   |
-| v0.3→v0.4 | §7 预算         | 明确 Equal generation budget，不再暗示 equal compute                    |
-| v0.3→v0.4 | §9 日志         | 增加 step-level trajectory 和 subagent marginal information gain 字段 |
-| v0.3→v0.4 | §11 失败归因      | 区分 test_error 与 environment_error，保留双人标注与 Cohen's κ              |
-| v0.3→v0.4 | §17 主线表述      | 删除“第一个”这类过强表述，改为更稳健的研究贡献表述                                       |
+| v0.4→v0.5 | §1 研究目标      | 补充 multi-hop QA（非仅 coding），强调 subagent 机制验证                |
+| v0.4→v0.5 | §5 实验设计      | Stage 1B 改为 mechanism confirmation，10 tasks × 4 systems，无 seed 扩展 |
+| v0.4→v0.5 | §5 核心指标      | 新增 5 个因果指标：evidence recall、missing-hop coverage、integration error rate、tokens per correct answer、Explore-found/Build-failed cases |
+| v0.4→v0.5 | §7 S4 新增      | 新增 S4: Explore → structured evidence table → Build               |
+| v0.4→v0.5 | §9 日志         | 增加 step-level trajectory 和 subagent marginal information gain 字段 |
+| v0.4→v0.5 | §11 失败归因      | 区分 test_error 与 environment_error，保留双人标注与 Cohen's κ              |
+| v0.4→v0.5 | §17 主线表述      | 删除"第一个"这类过强表述，改为更稳健的研究贡献表述                                       |
 
 ---
 
 ## 1. 研究目标
 
-本实验研究真实 coding-agent 框架中的 `spawn subagent` 操作是否能提升代码修复任务的成功率与成本效率。
+本实验研究真实 agent 框架中的 `spawn subagent` 操作是否能提升任务成功率与成本效率。实验分两个任务域：
+
+**域 A：Coding** — 代码修复任务（SW bench 类）
+**域 B：Multi-hop QA** — MuSiQue 多跳问答（当前 pilot 阶段使用）
 
 核心问题不是证明 subagent 一定优于 single agent，也不是证明 subagent 一定存在目标错位，而是回答：
 
-> 在代码任务中，什么时候应该 spawn subagent，spawn 哪类 subagent，subagent 的输出是否真的帮助 primary agent，失败主要发生在探索、执行、整合还是预算控制环节？
+> subagent 的输出是否真的帮助 primary agent？失败主要发生在探索（evidence miss）、整合（integration error）还是预算控制环节？
 
-实验聚焦 OpenCode 原生 agent 机制，优先使用 OpenCode 内置 primary agents 与 subagents，而不是一开始手搓复杂多角色系统。
+实验聚焦 OpenCode 原生 agent 机制，优先使用 OpenCode 内置 primary agents 与 subagents。
 
-本实验全部使用本地推理：
-
-```text
-Qwen3.5-9B + vLLM 0.19.1 + OpenCode
-```
-
-不依赖外部 API。这既排除了 API cost 变量，也测试本地小模型在 spawn workflow 下的行为模式。
+Stage 1B（当前 pilot）聚焦域 B（Multi-hop QA），不进入原来设计的 coding 实验。
 
 ---
 
@@ -321,77 +316,51 @@ Qwen3.5-9B 不是 Claude / GPT-4 级模型。在投入 Stage 2 之前，必须�
 
 ### 5.1 任务类型
 
-第一阶段任务为代码修复任务，优先使用：
+Stage 1B 使用 Multi-hop QA（MuSiQue benchmark）。
 
-* SWE-bench Lite / Verified 小子集；
-* curated Python bug-fix tasks；
-* 小型真实 repo 的 failing-test 修复任务。
-
-每个任务必须具备可自动评估的 oracle，例如：
-
-* regression tests pass；
-* issue-specific tests pass；
-* patch 能被 evaluator 判定为成功。
+每个任务：
+- 包含 20 个段落（paragraphs），其中 N 个为 supporting paragraphs（N = num_hops）
+- 需要跨 N 个段落链式推理（2-hop / 3-hop / 4-hop）
+- gold answer 已知，支持自动评估
 
 ### 5.2 任务选择原则
 
-任务集需要同时包含 single-agent-readable 和 multi-agent-favorable 场景，避免只构造对 multi-agent 有利的任务。
+任务集需要覆盖不同跳数（2/3/4-hop），以及不同 difficulty bucket（local_readable / multi_file / long_context）。
 
-每个任务需要具备：
-
-1. 明确 issue / bug 描述；
-2. 可 checkout 的 repo；
-3. 可复现的初始失败；
-4. 可运行 evaluator；
-5. 可捕获 final patch；
-6. 任务难度不能全部过高，避免所有系统 success rate 接近 0。
-
-### 5.3 初始规模与阶段设计
-
-#### Stage 1A: Pilot sanity run
+### 5.3 Stage 1B: Mechanism Confirmation
 
 ```text
-10 tasks × 3 systems × 1 seed = 30 runs
+10 tasks × 4 systems = 40 runs
 ```
 
 目标：
 
-1. 验证完整实验执行流程；
-2. 检查日志字段是否完整；
-3. 检查 evaluator 是否稳定；
-4. 检查 subagent calls 是否能被完整捕获；
-5. 发现系统性 instrumentation bug。
+1. 观察 subagent 是否真的找到了 evidence（S1 vs S2 的 evidence recall 差异）
+2. 观察 S2→S3 的 missing-hop coverage 是否提升
+3. 识别 integration error（S2/S3 的 Explore 找到了 evidence 但 Build 仍然答错）
+4. 测量 tokens per correct answer（cost efficiency）
+5. 统计 Explore-found / Build-failed 案例（诊断整合瓶颈）
 
-Stage 1A 通过后再进入 Stage 1B。
+不进行 seed 扩展（n=1），因为重点是机制诊断而非统计效力。
 
-#### Stage 1B: Pilot repeated runs
+#### Stage 1B 核心指标
 
-```text
-10 tasks × 3 systems × 3 seeds = 90 runs
-```
+| # | 指标 | 定义 | 用途 |
+|---|------|------|------|
+| M1 | **evidence recall** | subagent 报告的 supporting paragraphs 占 gold supporting paragraphs 的比例 | 探索效率 |
+| M2 | **missing-hop coverage** | S2/S3/S4 比 S1 多覆盖的 hop 数 | 分工收益 |
+| M3 | **integration error rate** | Explore 找到了 ≥1 gold paragraph 但 Build 最终答错的比例 | 整合瓶颈 |
+| M4 | **tokens per correct answer** | 成功案例的总 token 消耗 / 成功数 | 成本效率 |
+| M5 | **Explore-found / Build-failed cases** | Explore 找到 gold evidence 但 Build 仍然失败的次数 | 诊断表 |
 
-目标：
+#### 预注册假设（将被数据检验）
 
-1. 初步观察 single vs subagent 是否有方向性差异；
-2. 验证 failure attribution 流程；
-3. 估计 run-to-run variance；
-4. 判断是否需要调整任务难度或预算。
-
-#### Stage 2: Main Pilot
-
-默认规模：
-
-```text
-30 tasks × 3 systems × 3 seeds = 270 runs
-```
-
-如果资源不足，可降为：
-
-```text
-30 tasks × 3 systems × 2 seeds = 180 runs
-```
-
-Stage 2 是第一版实验报告主体。
+| 假设 | S1 vs S2 | S2 vs S3 | S3 vs S4 |
+|------|----------|----------|----------|
+| evidence recall | S2 > S1 | S3 ≥ S2 | S4 ≥ S3 |
+| missing-hop coverage | S2 > S1 | S3 > S2 | S4 > S3 |
+| integration error rate | 需观察 | 需观察 | S4 < S3（结构化表格降低整合难度） |
+| tokens per correct answer | 需观察 | 需观察 | S4 < S3（表格形式减少 token 浪费） |
 
 ---
 
@@ -407,11 +376,11 @@ local_readable | multi_file | long_context | multi_hypothesis
 
 #### local_readable
 
-相关上下文较短，1–2 个文件内即可解决。预期 Build-only 更稳或更便宜。
+相关上下文较短，1–2 个段落内即可解决。预期 Build-only 更稳或更便宜。
 
 #### multi_file
 
-需要跨 3–8 个文件定位和修改。subagent 可能通过探索分工获得收益。
+需要跨 3–8 个段落定位。subagent 可能通过探索分工获得收益。
 
 #### long_context
 
@@ -521,7 +490,7 @@ Explore 的非法任务包括：
 
 目标：测试只读探索型 subagent 是否能提升代码修复效果。
 
-### 7.3 S3: Build + Explore + General
+### 7.3 S3: Explore → General → Build
 
 ```text
 system = build_explore_general
@@ -529,62 +498,52 @@ system = build_explore_general
 
 约束：
 
-* 允许 Build 调用 `Explore` 和 `General` 两类 subagent。
-* Explore 用于只读代码探索。
-* General 只允许处理明确、封闭的子任务。
-* Build 仍负责最终 patch 和提交。
+* Phase 1（Explore）：只读 subagent，负责在 documents.txt 中搜索 supporting paragraphs，记录关键事实。
+* Phase 2（General）：接收 Explore 的 findings，验证逻辑链是否完整，检查是否有遗漏或矛盾。
+* Phase 3（Build）：接收 Explore + General 的输出，链式推理，输出 ANSWER。
 
-General 的推荐任务边界：
+目标：测试增加 General review 环节是否提升 missing-hop coverage，降低 integration error。
 
-* 分析某个具体 failing test；
-* 比较两个候选 bug hypothesis；
-* review Build 已经形成的 patch plan；
-* 检查某个局部实现是否违反已有接口约定；
-* 对某段测试日志做原因归纳。
+### 7.4 S4: Explore → structured evidence table → Build
 
-General 的禁止任务：
+```text
+system = build_explore_table
+```
 
-* “随便看看整个 repo”；
-* “帮我完整解决这个 issue”；
-* 未限定范围的大规模探索；
-* 未经 Build 整合直接提交 patch。
+约束：
 
-目标：测试 OpenCode 原生多 subagent 可用时，dynamic spawn 是否优于 Build-only 与 Build+Explore。
+* Phase 1（Explore）：只读 subagent，在 documents.txt 中搜索 supporting paragraphs。
+* **Phase 2（Table generation）**：将 Explore findings 整理为结构化证据表，格式为：
 
-### 7.4 Stage 0 / Stage 1: General 行为观察
+```markdown
+| Paragraph ID | Key Fact | Connects To |
+|---|---|---|
+| 7 | Phu Luang country = Vietnam | hop 1 |
+| 12 | John Phan birthplace = Vietnam | hop 2 |
+| 18 | Region of Vietnam = South Central Coast | hop 3 → ANSWER |
+```
+
+* Phase 3（Build）：接收结构化证据表，链式推理，输出 ANSWER。
+
+目标：结构化表格是否降低 integration error（S4 vs S3），以及是否减少 Build 的 token 消耗（表格比自由文本更紧凑）。
+
+实现注意：表格生成由单独的 OpenCode 进程（agent = general）执行，使用专门的 prompt 要求输出 markdown table 格式。
+
+### 7.5 机制观察与判定标准
 
 General subagent 的定义较宽泛。如果 General 与 Explore 的实际行为高度重叠，S3 vs S2 将没有清晰信号。
 
 观察内容：
 
-* General 被 Build 调用时，Build 给出的任务是什么；
-* General 实际是在搜索、分析、生成 patch，还是 review；
-* General 与 Explore 在相同 task 下是否表现出差异；
-* Qwen3.5-9B 是否遵守 Explore 只读约束；
-* Qwen3.5-9B 是否把 General 当成另一个 Build 来使用。
+* General 是否在独立验证 evidence chain，而非简单重复 Explore 的搜索
+* General 是否能识别 missing hops
+* 结构化表格是否比自由文本更能帮助 Build 正确整合
 
 判定标准：
 
-* 如果 General 和 Explore 在 ≥70% 的 runs 中行为高度重叠，Stage 2 可以考虑弱化 S3 结论，或将其标记为 “additional subagent availability” 而不是 “distinct General role”。
-* 如果 General 表现出独特价值，例如 test explanation、hypothesis comparison、patch review，则保留 S3 主比较。
-* 如果 Explore 频繁违反只读约束，应报告为模型 instruction-following 限制，并在 system prompt 或 harness 权限层面强制只读。
-
-### 7.5 可选 ablation systems
-
-这些系统不进入 Stage 1 默认主实验。只有 Stage 2 后资源允许时再加入。
-
-#### S2-forced: Build forced Explore once
-
-目的：区分 Explore 本身是否有用，与 OpenCode native policy 是否会正确调用 Explore。
-
-约束：
-
-* 每个任务开始后，Build 必须先调用一次 Explore。
-* Explore 返回后，Build 再决定后续是否继续调用。
-
-#### S3-forced-explore: Build forced Explore, General optional
-
-目的：测试 General 的边际价值，而不是把 Explore 是否被调用混入 S3 结果。
+* 如果 S4 的 integration error rate 显著低于 S3，说明结构化格式有边际价值
+* 如果 S4 的 tokens per correct answer 低于 S3，说明表格形式降低了 Build 的推理成本
+* 如果 Explore → General → Build（S3）和 Explore → table → Build（S4）都优于 S2，说明多 subagent 确实有架构价值
 
 ---
 
@@ -645,6 +604,7 @@ Equal generation budget
 S1: Build output ≤ cap
 S2: Build + Explore output ≤ cap
 S3: Build + Explore + General output ≤ cap
+S4: Build + Explore + Table output ≤ cap
 ```
 
 说明：这不是 equal compute budget。multi-agent 系统仍可能使用更多 input tokens、更多 tool calls 或更多 wall-clock time。因此必须记录并分析这些成本。
@@ -1473,16 +1433,14 @@ Stage 1A 结束后输出短报告，包含：
 
 ### 18.2 Stage 1B report
 
-Stage 1B 结束后输出 pilot report，包含：
+Stage 1B 结束后输出 mechanism confirmation report，包含：
 
-1. 成功率和成本初步结果；
-2. run-to-run variance；
-3. failure attribution 示例；
-4. Cohen's κ；
-5. subagent help/harm 初步趋势；
-6. 是否调整任务难度；
-7. 是否调整 output cap；
-8. 是否进入 Stage 2。
+1. **5 核心指标（M1-M5）**：evidence recall、missing-hop coverage、integration error rate、tokens per correct answer、Explore-found/Build-failed cases
+2. Answer accuracy（次要）
+3. 各系统 per-hop breakdown（2/3/4-hop）
+4. 预注册假设检验
+5. S3 vs S4 对比（结构化表格 vs 自由文本）
+6. 机制结论：subagent 在哪些条件下有价值
 
 ### 18.3 Stage 2 report
 
@@ -1542,99 +1500,41 @@ Stage 2 report 至少包含：
 
 从当前状态开始，执行 agent 应按以下顺序推进。
 
-### Step 1: 固化配置
+### Step 1: 更新 harness
 
-创建：
+在 `scripts/harness.py` 中：
 
-```text
-outputs/opencode_spawn_pilot/config/stage1_qwen35_9b.yaml
-outputs/opencode_spawn_pilot/config/vllm_launch_command.sh
-```
+1. 添加 S4 系统：`build_explore_table`（Explore → Table → Build）
+2. 实现 5 个核心指标的计算（M1-M5）
+3. 在 `runs.jsonl` 中新增对应字段
 
-配置必须包含：
-
-```yaml
-base_url: http://localhost:8010/v1
-model: qwen35-9b
-gpu: 2
-max_model_len: 65536
-thinking_enabled: false
-tool_call_parser: hermes
-```
-
-### Step 2: 完成 Stage 0C 能力预验证
-
-如尚未完成，执行 §4.3 的五项模型能力预验证，并输出：
-
-```text
-capability_check/prevalidation_report.md
-```
-
-### Step 3: 准备 Stage 1A tasks
-
-准备 10 个任务，写入：
-
-```text
-tasks.jsonl
-```
-
-确保每个任务有：
-
-* issue 描述；
-* repo 信息；
-* baseline failing test；
-* evaluator；
-* pre-run observable features；
-* post-hoc oracle features。
-
-### Step 4: Freeze task annotations
-
-保存标注原始数据到：
-
-```text
-annotations/
-```
-
-并 git commit。
-
-### Step 5: 运行 Stage 1A
+### Step 2: 运行 Stage 1B
 
 执行：
 
 ```text
-10 tasks × 3 systems × 1 seed = 30 runs
+10 tasks × 4 systems = 40 runs
 ```
 
 输出：
 
-* `runs.jsonl`
+* `runs.jsonl`（含 M1-M5 字段）
 * `trajectories/`
-* `patches/`
-* `evaluator_logs/`
 * `raw_agent_logs/`
 
-### Step 6: Stage 1A review
+### Step 3: Stage 1B review
 
 检查：
 
-* 是否有系统性 environment_error；
-* token accounting 是否正确；
-* subagent call 是否捕获；
-* evaluator 是否稳定；
-* General 是否有可区分行为；
-* output cap 是否需要调整。
+* 各系统的 evidence recall（M1）差异
+* integration error rate（M3）是否有系统差异
+* Explore-found/Build-failed 案例（M5）比例
+* S4 结构化表格是否降低了 Build token 消耗
+* 预注册假设是否被数据支持
 
-### Step 7: 进入 Stage 1B
+### Step 4: Stage 1B report
 
-如果 Stage 1A 通过，执行：
-
-```text
-10 tasks × 3 systems × 3 seeds = 90 runs
-```
-
-### Step 8: Stage 1B report
-
-输出 pilot report，决定是否进入 Stage 2。
+输出 mechanism confirmation report（含 5 指标、per-hop breakdown、假设检验）。
 
 ---
 
@@ -1642,26 +1542,21 @@ annotations/
 
 本实验不试图证明 subagent 天然更好，也不试图证明 subagent 天然存在目标错位，而是研究：
 
-> spawn subagent 是一个可优化的操作。我们在本地小模型 Qwen3.5-9B + vLLM 上，用 OpenCode 原生 Build / Explore / General 机制评估 single-agent 与 subagent workflow 的差异，识别 spawn 带来的收益、成本和失败来源，并为后续 policy learning 提供轨迹数据。
+> subagent 是一个可优化的操作。我们在本地小模型 Qwen3.5-9B + vLLM 上，用 OpenCode 原生 Explore / General 机制，在 MuSiQue multi-hop QA 任务上评估 Build-only、Explore→Build、Explore→General→Build、Explore→Table→Build 四种 workflow，通过 evidence recall、missing-hop coverage、integration error rate 等因果指标识别 subagent 的探索价值与整合瓶颈，为后续 spawn policy 学习提供数据基础。
 
 更稳健的一句话总结：
 
-**用 Qwen3.5-9B + vLLM 本地推理驱动 OpenCode，在代码修复任务上比较 Build-only、Build+Explore、Build+Explore+General 三种 workflow，在 calibration-based equal generation budget 下分析 subagent 是否通过上下文探索和任务分工提升成功率，并通过 input token 协变量、双人失败标注和 step-level trajectory 区分“多读上下文”“任务分工”和“整合失败”等因素，为后续 spawn policy 学习提供数据基础。**
+**用 Qwen3.5-9B + vLLM 本地推理驱动 OpenCode，在 MuSiQue multi-hop QA 上比较四种 workflow（S1-S4），通过 5 个机制诊断指标（evidence recall、missing-hop coverage、integration error、tokens per correct answer、Explore-found/Build-failed）识别 subagent 在哪些条件下有价值，为后续 spawn policy 学习提供数据基础。**
 
 ---
 
-## 附录 A：v0.3 → v0.4 关键差异
+## 附录 A：v0.4 → v0.5 关键差异
 
-| 维度                  | v0.3                                | v0.4                                                     |
-| ------------------- | ----------------------------------- | -------------------------------------------------------- |
-| 默认部署                | 2 GPU / 8000+8001 方案                | 已验证单实例：GPU 2 / port 8010                                 |
-| model name          | `Qwen/Qwen3.5-9B` / `qwen3.5-9b` 混用 | 统一为 `qwen35-9b`                                          |
-| max_model_len       | 32768                               | 65536                                                    |
-| thinking            | 未固化到启动命令                            | 固化 `enable_thinking=false`                               |
-| tool call           | 未固化 Hermes parser                   | 固化 `--enable-auto-tool-choice --tool-call-parser hermes` |
-| Stage 0             | 写成待完成                               | 拆成 infrastructure completed 与 capability prevalidation   |
-| budget              | equal-output-token                  | 明确为 equal generation budget                              |
-| subagent help       | `help_label` 为主                     | 增加边际信息增益字段                                               |
-| task features       | oracle 与 observable 混合              | 拆成 pre-run observable 与 post-hoc oracle                  |
-| failure attribution | test/environment 边界模糊               | 明确拆分 test_error 与 environment_error                      |
-| 研究表述                | 使用“第一个”强 claim                      | 改为稳健贡献表述                                                 |
+| 维度 | v0.4 | v0.5 |
+|------|------|------|
+| 任务域 | SWE-bench coding | MuSiQue multi-hop QA |
+| 实验规模 | 10 tasks × 3 systems × 3 seeds = 90 runs | 10 tasks × 4 systems = 40 runs |
+| 新增系统 | — | S4: Explore → structured evidence table → Build |
+| 核心指标 | answer accuracy（主要） | M1-M5 机制诊断指标 |
+| Stage 1B 性质 | pilot repeated runs（扩展） | mechanism confirmation（诊断） |
+| Seed 扩展 | 有（3 seeds） | 无（n=1，机制诊断目的） |
