@@ -12,7 +12,7 @@ CUDA_VISIBLE_DEVICES=2 python3 -m vllm.entrypoints.openai.api_server \
     --enable-prefix-caching \
     --default-chat-template-kwargs '{"enable_thinking": false}' \
     --enable-auto-tool-choice \
-    --tool-call-parser hermes
+    --tool-call-parser qwen3_coder
 
 # Note: Must be run inside the hermes-agent venv
 # cd /home/jinxu && source hermes-agent/venv/bin/activate

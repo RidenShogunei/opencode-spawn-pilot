@@ -1,0 +1,17 @@
+TASK: Fix a bug in the calculator module.
+
+ISSUE: The add() function in calculator.py returns a - b instead of a + b.
+For example, add(2, 3) returns -1 instead of 5.
+
+YOUR JOB:
+1. Read calculator.py and understand the bug
+2. Fix the add() function (change "a - b" to "a + b")
+3. Run: python -m pytest test_calculator.py::test_add -v
+4. Confirm the test passes
+5. Use git diff to show the change
+
+IMPORTANT CONSTRAINTS:
+- Do NOT call any subagent (no Explore, no General, no Task agent)
+- Do NOT use any agent spawning functionality
+- Complete the fix yourself using only direct tool calls
+- When done, say "SMOKE_TEST_COMPLETE" and run git diff
