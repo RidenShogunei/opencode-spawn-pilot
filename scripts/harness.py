@@ -96,6 +96,25 @@ Example format:
 
 Begin now."""
 
+# S1 standalone prompt (no subagent context)
+S1_PROMPT = """TASK: Answer a multi-hop question by searching and reading documents.
+
+QUESTION: {question}
+
+RESOURCES:
+- documents.txt: {num_paragraphs} Wikipedia-style paragraphs. Each starts with "--- PARAGRAPH N ---".
+
+PROCESS:
+1. Use `grep` to search for keywords in documents.txt
+2. Use `read` to read documents.txt to find specific paragraphs
+3. Chain information across paragraphs ({num_hops}-hop question)
+4. When ready, output exactly on its own line: ANSWER: <your answer>
+
+IMPORTANT: Do NOT use any subagents (no Explore, no General, no Task). Complete this task yourself using only direct tool calls (grep, read).
+
+Begin now."""
+
+# S2/S3/S4 build prompt (receives subagent context)
 BUILD_PROMPT = """TASK: Answer a multi-hop question using findings from subagents.
 
 QUESTION: {question}
@@ -103,7 +122,7 @@ QUESTION: {question}
 {subagent_context}
 
 INSTRUCTIONS:
-1. Read the subagent findings above
+1. Read the subagent findings above carefully
 2. If needed, verify by reading specific paragraphs from documents.txt
 3. Chain the information across paragraphs ({num_hops}-hop question)
 4. When ready, output exactly on its own line: ANSWER: <your answer>
@@ -520,11 +539,19 @@ def run_single(task, system_key, all_runs_for_task=None):
         "No subagent findings available. Search documents.txt yourself.\n" \
         "IMPORTANT: Do NOT use any subagents. Use only direct tool calls (grep, read)."
 
-    build_prompt = BUILD_PROMPT.format(
-        question=task["question"],
-        subagent_context=subagent_context,
-        num_hops=task["num_hops"]
-    )
+    # S1 uses standalone prompt; S2/S3/S4 use build prompt with subagent context
+    if context_parts:
+        build_prompt = BUILD_PROMPT.format(
+            question=task["question"],
+            subagent_context=subagent_context,
+            num_hops=task["num_hops"]
+        )
+    else:
+        build_prompt = S1_PROMPT.format(
+            question=task["question"],
+            num_paragraphs=task.get("num_paragraphs", 20),
+            num_hops=task["num_hops"]
+        )
 
     with open(f"{workdir}/prompt_build.txt", "w") as f:
         f.write(build_prompt)
