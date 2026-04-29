@@ -551,8 +551,9 @@ def run_single(task, system_key, all_runs_for_task=None):
     success, eval_detail = evaluate(answer, task["answer"], task["answer_aliases"])
 
     # ---- Compute M1: evidence recall ----
+    # NOTE: pass 'task' (from tasks.jsonl, has post_hoc_features) not 'task_data' (per-task paragraph file)
     explore_text = subagent_outputs.get("explore", "")
-    m1_recall, m1_found_paras = compute_m1_evidence_recall(explore_text, task_data)
+    m1_recall, m1_found_paras = compute_m1_evidence_recall(explore_text, task)
 
     # ---- Compute M2: missing-hop coverage (needs all runs, filled in main) ----
     m2_extra_paras = []
