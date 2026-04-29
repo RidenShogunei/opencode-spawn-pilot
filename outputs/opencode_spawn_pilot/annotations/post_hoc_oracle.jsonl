@@ -1,0 +1,10 @@
+{"task_id": "musique_2hop_001", "difficulty_bucket": "local_readable", "requires_cross_doc_reasoning": true, "requires_parallel_entity_search": false, "num_supporting_paragraphs": 2, "num_decomposition_steps": 2}
+{"task_id": "musique_2hop_002", "difficulty_bucket": "local_readable", "requires_cross_doc_reasoning": true, "requires_parallel_entity_search": false, "num_supporting_paragraphs": 2, "num_decomposition_steps": 2}
+{"task_id": "musique_2hop_003", "difficulty_bucket": "local_readable", "requires_cross_doc_reasoning": true, "requires_parallel_entity_search": false, "num_supporting_paragraphs": 2, "num_decomposition_steps": 2}
+{"task_id": "musique_3hop_004", "difficulty_bucket": "multi_file", "requires_cross_doc_reasoning": true, "requires_parallel_entity_search": false, "num_supporting_paragraphs": 3, "num_decomposition_steps": 3}
+{"task_id": "musique_3hop_005", "difficulty_bucket": "multi_file", "requires_cross_doc_reasoning": true, "requires_parallel_entity_search": false, "num_supporting_paragraphs": 3, "num_decomposition_steps": 3}
+{"task_id": "musique_3hop_006", "difficulty_bucket": "multi_file", "requires_cross_doc_reasoning": true, "requires_parallel_entity_search": false, "num_supporting_paragraphs": 3, "num_decomposition_steps": 3}
+{"task_id": "musique_4hop_007", "difficulty_bucket": "long_context", "requires_cross_doc_reasoning": true, "requires_parallel_entity_search": false, "num_supporting_paragraphs": 4, "num_decomposition_steps": 4}
+{"task_id": "musique_4hop_008", "difficulty_bucket": "long_context", "requires_cross_doc_reasoning": true, "requires_parallel_entity_search": false, "num_supporting_paragraphs": 4, "num_decomposition_steps": 4}
+{"task_id": "hotpotqa_comp_009", "difficulty_bucket": "multi_hypothesis", "requires_cross_doc_reasoning": true, "requires_parallel_entity_search": true, "num_supporting_paragraphs": 3, "num_decomposition_steps": 0}
+{"task_id": "hotpotqa_comp_010", "difficulty_bucket": "multi_hypothesis", "requires_cross_doc_reasoning": true, "requires_parallel_entity_search": true, "num_supporting_paragraphs": 2, "num_decomposition_steps": 0}

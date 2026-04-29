@@ -1,0 +1,5 @@
+bugsinpy/
+swebench_repo/
+__pycache__/
+.pytest_cache/
+*.pyc

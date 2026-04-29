@@ -1,0 +1,64 @@
+# Stage 1 Configuration - OpenCode-Native Spawn Pilot
+# Qwen3.5-9B + vLLM 0.19.1
+
+benchmark:
+  name: MuSiQue + HotpotQA (Multi-hop QA)
+  source: MuSiQue (dgslibisey/MuSiQue) + HotpotQA (hotpotqa/hotpot_qa)
+  task_count: 10
+  difficulty_buckets:
+    local_readable: [musique_2hop_001, musique_2hop_002, musique_2hop_003]
+    multi_file: [musique_3hop_004, musique_3hop_005, musique_3hop_006]
+    long_context: [musique_4hop_007, musique_4hop_008]
+    multi_hypothesis: [hotpotqa_comp_009, hotpotqa_comp_010]
+
+experiment:
+  stage: 1A
+  tasks: 10
+  systems: [build_only, build_explore, build_explore_general]
+  seeds: [42]
+  total_runs: 30
+
+budget:
+  type: equal_generation
+  per_task_output_cap: 16000  # generous for pilot, calibrate after Stage 1A
+  budget_warning_at: 0.9
+
+vllm:
+  base_url: http://localhost:8010/v1
+  model: qwen35-9b
+  gpu: 2
+  max_model_len: 65536
+  thinking_enabled: false
+  tool_call_parser: qwen3_coder
+  enable_auto_tool_choice: true
+  enable_prefix_caching: true
+  gpu_memory_utilization: 0.85
+  enforce_eager: true
+
+opencode:
+  provider: openai_compatible
+  endpoint: http://127.0.0.1:8010/v1
+  model: qwen35-9b
+  temperature: 0.0
+
+systems:
+  s1_build_only:
+    agent: Build
+    subagents: []
+    constraints: ["No subagent calls allowed"]
+
+  s2_build_explore:
+    agent: Build
+    subagents: [Explore]
+    constraints: ["Explore is read-only", "Explore for document search only"]
+
+  s3_build_explore_general:
+    agent: Build
+    subagents: [Explore, General]
+    constraints: ["Explore read-only", "General for bounded subtask analysis"]
+
+evaluation:
+  metric: exact_match_or_alias
+  aliases_field: answer_aliases
+  case_sensitive: false
+  normalize: true  # strip, lowercase, remove articles

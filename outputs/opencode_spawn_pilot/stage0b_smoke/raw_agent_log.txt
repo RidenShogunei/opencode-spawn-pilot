@@ -1,0 +1,1441 @@
+[0m
+> build · qwen35-9b
+[0m
+[0m→ [0mRead calculator.py
+[0m
+[0m← [0mEdit calculator.py
+Index: /home/jinxu/opencode-spawn-pilot/data/stage0b_smoke/calculator/calculator.py
+===================================================================
+--- /home/jinxu/opencode-spawn-pilot/data/stage0b_smoke/calculator/calculator.py
++++ /home/jinxu/opencode-spawn-pilot/data/stage0b_smoke/calculator/calculator.py
+@@ -2,9 +2,9 @@
+ 
+ 
+ def add(a, b):
+     """Add two numbers."""
+-    return a - b  # BUG: should be a + b
++    return a + b
+ 
+ 
+ def multiply(a, b):
+     """Multiply two numbers."""
+
+[0m
+[0m$ [0mpython -m pytest test_calculator.py::test_add -v
+============================= test session starts ==============================
+platform linux -- Python 3.11.15, pytest-9.0.3, pluggy-1.6.0 -- /home/jinxu/hermes-agent/venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/jinxu/opencode-spawn-pilot/data/stage0b_smoke/calculator
+plugins: anyio-4.13.0, xdist-3.8.0, asyncio-1.3.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 1 item
+
+test_calculator.py::test_add PASSED                                      [100%]
+
+============================== 1 passed in 0.01s ===============================
+[0m
+[0m$ [0mgit diff
+diff --git a/scripts/start_vllm.sh b/scripts/start_vllm.sh
+index c416553..e64384f 100644
+--- a/scripts/start_vllm.sh
++++ b/scripts/start_vllm.sh
+@@ -12,7 +12,7 @@ CUDA_VISIBLE_DEVICES=2 python3 -m vllm.entrypoints.openai.api_server \
+     --enable-prefix-caching \
+     --default-chat-template-kwargs '{"enable_thinking": false}' \
+     --enable-auto-tool-choice \
+-    --tool-call-parser hermes
++    --tool-call-parser qwen3_coder
+ 
+ # Note: Must be run inside the hermes-agent venv
+ # cd /home/jinxu && source hermes-agent/venv/bin/activate
+diff --git a/spec.md b/spec.md
+index 2a0668d..9dcaaa1 100644
+--- a/spec.md
++++ b/spec.md
+@@ -1,23 +1,25 @@
+ # OpenCode-Native Spawn Pilot Spec
+ 
+-版本：v0.3  
+-上一版本：v0.2  
+-变更类型：模型框架从 API 切换到本地推理  
+-主题：用本地 Qwen3.5-9B + vLLM 驱动 OpenCode，评测 single-agent vs subagent workflow。
++版本：v0.4
++上一版本：v0.3
++变更类型：Stage 0 验证后执行版修订
++主题：用本地 Qwen3.5-9B + vLLM 驱动 OpenCode，评测 single-agent vs subagent workflow，并为后续 spawn policy / RL 优化提供轨迹数据。
+ 
+ ---
+ 
+ ## 变更记录
+ 
+-| 版本 | 变更项 | 说明 |
+-|------|--------|------|
+-| v0.2→v0.3 | §3 模型 | Claude Sonnet 4 API → Qwen3.5-9B + 本地 vLLM |
+-| v0.2→v0.3 | 新增 §3.4 | vLLM 部署方案（2×A100 40GB 可用） |
+-| v0.2→v0.3 | 新增 §4.3 | 模型能力预验证（Stage 0 必须项） |
+-| v0.2→v0.3 | §7 预算 | API cost 视角 → GPU throughput 视角，逻辑不变 |
+-| v0.2→v0.3 | §8 执行环境 | 增加 vLLM server 配置和 OpenCode endpoint 配置 |
+-| v0.2→v0.3 | §9 日志 | 增加 vLLM 指标字段 |
+-| v0.2→v0.3 | §16 成功标准 | 增加模型能力预验证项 |
++| 版本        | 变更项           | 说明                                                               |
++| --------- | ------------- | ---------------------------------------------------------------- |
++| v0.3→v0.4 | §3 模型配置       | 固化 Stage 0 已验证的 vLLM / Qwen / OpenCode 配置                        |
++| v0.3→v0.4 | §3.4 部署方案     | 默认从双实例方案改为已验证的单实例方案：GPU 2，port 8010                              |
++| v0.3→v0.4 | §3.5 新增       | 明确 thinking 关闭、Hermes tool parser、OpenAI-compatible endpoint 配置  |
++| v0.3→v0.4 | §4 Stage 0 状态 | 将 Stage 0 infrastructure validation 标记为 completed                |
++| v0.3→v0.4 | §4.3          | 将模型能力预验证从 infrastructure validation 中拆出，避免概念混淆                   |
++| v0.3→v0.4 | §7 预算         | 明确 Equal generation budget，不再暗示 equal compute                    |
++| v0.3→v0.4 | §9 日志         | 增加 step-level trajectory 和 subagent marginal information gain 字段 |
++| v0.3→v0.4 | §11 失败归因      | 区分 test_error 与 environment_error，保留双人标注与 Cohen's κ              |
++| v0.3→v0.4 | §17 主线表述      | 删除“第一个”这类过强表述，改为更稳健的研究贡献表述                                       |
+ 
+ ---
+ 
+@@ -29,9 +31,15 @@
+ 
+ > 在代码任务中，什么时候应该 spawn subagent，spawn 哪类 subagent，subagent 的输出是否真的帮助 primary agent，失败主要发生在探索、执行、整合还是预算控制环节？
+ 
+-实验聚焦 OpenCode 原生 agent 机制，优先使用 OpenCode 内置的 primary agents 与 subagents，而不是一开始手搓复杂多角色系统。
++实验聚焦 OpenCode 原生 agent 机制，优先使用 OpenCode 内置 primary agents 与 subagents，而不是一开始手搓复杂多角色系统。
+ 
+-**本实验全部使用本地推理（Qwen3.5-9B + vLLM）**，不依赖外部 API。这既排除了 API cost 变量，也测试小模型在 spawn workflow 下的行为模式——这是一个重要但被现有文献忽视的设置。
++本实验全部使用本地推理：
++
++```text
++Qwen3.5-9B + vLLM 0.19.1 + OpenCode
++```
++
++不依赖外部 API。这既排除了 API cost 变量，也测试本地小模型在 spawn workflow 下的行为模式。
+ 
+ ---
+ 
+@@ -39,19 +47,23 @@
+ 
+ 此前探索性实验显示，spawned-agent delegation 并不是稳定有害，也不是稳定有益。subagent 有时能通过额外上下文和分工提升任务成功率，但也可能引入 recommendation drift、过度保守、动作语义混淆或 integration error。
+ 
+-现存 spawn / multi-agent 研究几乎全部基于 GPT-4 / Claude 级别的强模型。一个重要空缺是：
++现有 spawn / multi-agent 研究通常更关注 GPT-4 / Claude 级别强模型。一个重要空缺是：
+ 
+-> 在本地可部署的小模型（~9B）上，spawn subagent 的效果如何？小模型是否也能从任务分工中受益？还是 spawn overhead 压倒了收益？
++> 在本地可部署的小模型，例如 9B 级模型上，spawn subagent 的效果如何？小模型是否也能从任务分工中受益？还是 spawn overhead 压倒收益？
+ 
+-因此，新的研究主线调整为：
++因此，本实验将 spawn agent 视为一个需要优化的操作，研究如何在真实任务中学习：
+ 
+-> 将 spawn agent 视为一个需要优化的操作，研究如何在真实任务中学习何时 spawn、spawn 给谁、传递什么上下文、如何整合 subagent 输出。
++1. 是否 spawn；
++2. spawn 哪类 subagent；
++3. 传递什么上下文；
++4. 分配多少预算；
++5. 如何整合 subagent 输出。
+ 
+ 代码任务是第一阶段的合适场景，因为 coding-agent 工作流天然包含代码库探索、bug 定位、patch 生成、测试解释和 review 等子任务。
+ 
+ ---
+ 
+-## 3. 实验框架与模型配置 🔴 重大修订
++## 3. 实验框架与模型配置
+ 
+ ### 3.1 主框架
+ 
+@@ -59,17 +71,15 @@
+ 
+ OpenCode 中的基本角色包括：
+ 
+-- Primary agent：用户直接交互的主 agent，例如 Build / Plan。
+-- Subagent：由 primary agent 调用的专门 agent，例如 Explore / General。
++* Primary agent：用户直接交互的主 agent，例如 Build / Plan。
++* Subagent：由 primary agent 调用的专门 agent，例如 Explore / General。
+ 
+ 第一版不手搓 Explorer / Implementer / Reviewer / Tester 四类角色，而是优先使用 OpenCode 原生结构。
+ 
+-### 3.2 原因
+-
+-使用 OpenCode 原生机制的原因：
++### 3.2 使用 OpenCode 原生机制的原因
+ 
+ 1. 更贴近真实 coding-agent 使用方式。
+-2. 避免实验被质疑为"自定义多 agent workflow"，而不是框架内真实 spawn 行为。
++2. 避免实验被质疑为“自定义多 agent workflow”，而不是框架内真实 spawn 行为。
+ 3. 先观察默认 subagent 机制在小模型上是否有价值，再决定是否设计 custom subagents 或 RL policy。
+ 4. OpenCode 相对开源和可控，方便插入日志、预算、subagent call 记录和失败归因。
+ 
+@@ -79,234 +89,325 @@ OpenCode 中的基本角色包括：
+ 
+ ```yaml
+ engine: vLLM 0.19.1
+-gpu: 2 × NVIDIA A100 40GB available (7 total, 5 occupied)
+-parallel_instances: 最多 2 个并发 vLLM 实例（每 GPU 一个）
++validated_gpu: 2
++validated_port: 8010
++available_hardware: NVIDIA A100 40GB class GPU
++parallel_instances: optional, not Stage 1 default
+ ```
+ 
+ #### 模型
+ 
+ ```yaml
+-model: Qwen/Qwen3.5-9B
++model_family: Qwen3.5-9B
++served_model_name: qwen35-9b
+ local_path: /home/jinxu/.cache/tiny-agents/models/Qwen/Qwen3.5-9B/
+-size: ~19 GB (4 shards: model.safetensors-00001~4-of-00004.safetensors)
+ architecture: Qwen3_5ForConditionalGeneration
+-max_model_len: 32768
++max_position_embeddings: 262144
++validated_max_model_len: 65536
+ ```
+ 
+-#### Primary Agent (Build) 配置
++#### 重要上下文长度结论
+ 
+-```yaml
+-model: Qwen3.5-9B
+-temperature: 0.0
+-max_output_tokens: 8192               # per-turn generation cap
+-gpu_memory_utilization: 0.85
+-enforce_eager: true                    # 9B 模型必须，避免 CUDA graph 内存溢出
+-tensor_parallel_size: 1                # 单 GPU 推理
+-enable_prefix_caching: true
+-api_endpoint: http://localhost:{port}/v1  # OpenAI-compatible
+-system_prompt: opencode 内置 Build agent 默认 prompt
++Stage 0 已验证：OpenCode 可能发送约：
++
++```text
++max_tokens ≈ 32000
++system_prompt ≈ 769 tokens
++```
++
++因此，`max_model_len` 不能低于约 32768。正式实验使用：
++
++```text
++max_model_len = 65536
+ ```
+ 
+-#### Subagent (Explore / General) 配置
++不要在 Stage 1/2 中降回 32768。
++
++### 3.4 默认 vLLM 部署方案：单实例已验证配置
++
++Stage 1 默认使用已经验证通过的单实例配置。
+ 
+ ```yaml
+-model: Qwen3.5-9B                      # 与 primary 相同模型
+-temperature: 0.0
+-max_output_tokens: 4096                # subagent per-turn 限制更严
+-gpu_memory_utilization: 0.85
+-enforce_eager: true
+-tensor_parallel_size: 1
+-enable_prefix_caching: true
+-api_endpoint: 与 primary 共用或独立实例（见 §3.4）
+-system_prompt: opencode 内置对应 subagent 默认 prompt
++validated_default:
++  gpu: 2
++  port: 8010
++  base_url: http://localhost:8010/v1
++  served_model_name: qwen35-9b
++  max_model_len: 65536
++  thinking_enabled: false
++  tool_call_parser: hermes
++```
++
++vLLM 启动命令：
++
++```bash
++CUDA_VISIBLE_DEVICES=2 python -m vllm.entrypoints.openai.api_server \
++    --model /home/jinxu/.cache/tiny-agents/models/Qwen/Qwen3.5-9B/ \
++    --served-model-name qwen35-9b \
++    --port 8010 \
++    --max-model-len 65536 \
++    --gpu-memory-utilization 0.85 \
++    --enforce-eager \
++    --tensor-parallel-size 1 \
++    --enable-prefix-caching \
++    --enable-auto-tool-choice \
++    --tool-call-parser hermes \
++    --default-chat-template-kwargs '{"enable_thinking": false}' \
++    --max-num-seqs 4
+ ```
+ 
+-#### 设计理由
++### 3.5 Thinking 与 tool call 配置
+ 
+-- **Primary 和 subagent 使用同一模型**：排除 "模型能力差异导致提升" 的混淆。
+-- **temperature = 0.0**：最大化可复现性。如果 Stage 0 发现温度过低导致死循环，可放宽到 0.1–0.3 并报告。
+-- **Qwen3.5-9B 的选择**：本地最大可用模型（19GB），单 A100 40GB 可运行，推理吞吐预期合理。
+-- **9B vs 强模型的差距**：这本身是研究贡献——揭示 spawn workflow 在能力有限模型上的行为规律。
++Stage 0 已验证 Qwen3.5-9B 需要显式关闭 thinking。
+ 
+-### 3.4 vLLM 部署方案（2×A100 40GB 可用）🟡 新增
++CLI 调用使用：
+ 
+-仅 2 张 A100 40GB 可用。每 GPU 运行一个 Qwen3.5-9B 实例（19GB 模型 + KV cache ≈ 25GB，gpu_memory_utilization=0.85 可行）。
++```bash
++--default-chat-template-kwargs '{"enable_thinking": false}'
++```
+ 
+-#### 实例分配
++Python API 调用使用等价参数：
+ 
++```python
++default_chat_template_kwargs={"enable_thinking": False}
+ ```
+-GPU 0: vLLM instance → primary endpoint (port 8000)
+-GPU 1: vLLM instance → dedicated subagent endpoint (port 8001)
++
++Tool call 兼容配置必须包含：
++
++```bash
++--enable-auto-tool-choice --tool-call-parser hermes
+ ```
+ 
+-两实例加载**同一模型**。分工：
+-- GPU 0 承担所有 primary agent（Build）推理 + Explore subagent 推理
+-- GPU 1 承担所有 General subagent 推理（如果 S3 使用）
++这两个参数用于解决 OpenCode tool call 与 vLLM / Qwen 的兼容问题。
+ 
+-**关键设计决策：同一 run 内的 subagent 调用是串行的**（Build → wait Explore → Build → wait General），因此不需要 per-run 独占 GPU。两个 vLLM 实例可以通过请求队列服务多个 run：
++### 3.6 OpenCode endpoint 配置
+ 
++OpenCode 通过 OpenAI-compatible API 连接本地 vLLM。
++
++```yaml
++provider: openai_compatible
++base_url: http://localhost:8010/v1
++api_key: not-needed
++model: qwen35-9b
+ ```
+-Time →
+-GPU 0: [Run 1: Build] [Run 2: Build] [Run 1: Explore] [Run 3: Build] ...
+-GPU 1: [idle       ] [Run 1: General] [idle         ] [Run 2: General] ...
++
++所有 primary agent 和 subagent 默认共用同一个 endpoint。不要在 Stage 1 中引入多 endpoint，除非单实例吞吐成为明确瓶颈。
++
++### 3.7 Primary Agent 配置
++
++Primary agent 使用 OpenCode 内置 Build agent。
++
++```yaml
++agent: Build
++model: qwen35-9b
++temperature: 0.0
++system_prompt: OpenCode built-in Build prompt
++endpoint: http://localhost:8010/v1
+ ```
+ 
+-#### 并发 run 调度
++如果 OpenCode 支持可靠覆盖 per-turn generation cap，可设置：
+ 
+-Stage 1 需跑 90 runs。2 GPU 下全部串行不可接受。策略：
++```yaml
++primary_per_turn_max_output_tokens: 8192
++```
+ 
+-- **流水线化**：同时 submit 多个 run 到 GPU 0 的请求队列。vLLM 支持 continuous batching，可同时处理多个请求（只要显存容纳 KV cache）。
+-- **预估吞吐**：Qwen3.5-9B on A100 40GB，continuous batching 下预估 30–50 tok/s per request，2–4 concurrent requests。90 runs × avg 40k output / 40 tok/s / 3 concurrent ≈ 30,000s ≈ 8.3 小时。
+-- 如果 subagent 调用很少（大部分 run Build 不 spawn），GPU 1 长期空闲 → 可以考虑两 GPU 都跑 primary，subagent 请求轮询分发。
++如果 OpenCode 实际请求仍发送约 32000 `max_tokens`，则不要假设上述限制已经生效。实验预算应由外部 harness 通过累计 output token 控制。
+ 
+-#### vLLM 实例启动命令
++### 3.8 Subagent 配置
+ 
+-```bash
+-# GPU 0 — Primary + Explore
+-CUDA_VISIBLE_DEVICES=0 python -m vllm.entrypoints.openai.api_server \
+-    --model /home/jinxu/.cache/tiny-agents/models/Qwen/Qwen3.5-9B/ \
+-    --port 8000 \
+-    --max-model-len 32768 \
+-    --gpu-memory-utilization 0.85 \
+-    --enforce-eager \
+-    --tensor-parallel-size 1 \
+-    --enable-prefix-caching \
+-    --max-num-seqs 4
++Subagent 使用 OpenCode 内置 Explore / General。
+ 
+-# GPU 1 — General subagent (if needed)
+-CUDA_VISIBLE_DEVICES=1 python -m vllm.entrypoints.openai.api_server \
+-    --model /home/jinxu/.cache/tiny-agents/models/Qwen/Qwen3.5-9B/ \
+-    --port 8001 \
+-    --max-model-len 32768 \
+-    --gpu-memory-utilization 0.85 \
+-    --enforce-eager \
+-    --tensor-parallel-size 1 \
+-    --enable-prefix-caching \
+-    --max-num-seqs 2
++```yaml
++agents:
++  Explore:
++    model: qwen35-9b
++    temperature: 0.0
++    endpoint: http://localhost:8010/v1
++    permission: read_only
++  General:
++    model: qwen35-9b
++    temperature: 0.0
++    endpoint: http://localhost:8010/v1
++    permission: bounded_subtask
+ ```
+ 
+-#### 成本估算
++如果 OpenCode 支持可靠覆盖 per-turn generation cap，可设置：
+ 
+-- 无 API 费用。
+-- GPU 计算时间：Stage 1 (90 runs) ≈ 8–10 小时在两 GPU 上。
+-- Stage 2 (270 runs) ≈ 24–30 小时。
++```yaml
++subagent_per_turn_max_output_tokens: 4096
++```
++
++同样，最终以累计 output token 预算为准。
+ 
+-#### 备用方案
++### 3.9 可选双实例部署方案
+ 
+-如果 Qwen3.5-9B 吞吐不足或因 continuous batching 导致 OOM：
+-- 降级到串行模式（一次只发一个请求到 vLLM），牺牲速度换取稳定性。
+-- 或者每个 run 独占一个 GPU 实例（极端保守，但 2 GPU 只能同时跑 2 runs）。
++双实例部署仅作为吞吐优化，不作为 Stage 1 默认配置。
++
++可选方案：
++
++```text
++GPU A: primary + Explore endpoint
++GPU B: General endpoint or additional shared endpoint
++```
++
++启用条件：
++
++1. 单实例 Stage 1A 跑通；
++2. 日志显示 vLLM 队列成为主要瓶颈；
++3. 双实例不会改变 agent 行为或 token accounting；
++4. endpoint routing 可以被完整记录。
++
++如果启用双实例，必须在 `runs.jsonl` 中记录每次请求使用的 endpoint、GPU id 和 model name。
+ 
+ ---
+ 
+-## 4. 实验对象
++## 4. Stage 0 状态与预验证
+ 
+-### 4.1 任务类型
++### 4.1 Stage 0A: Infrastructure validation status
+ 
+-第一阶段任务为代码修复任务，优先使用：
++当前状态：completed。
+ 
+-- SWE-bench Lite / Verified 小子集；或
+-- curated Python bug-fix tasks；或
+-- 小型真实 repo 的 failing-test 修复任务。
++已验证事实：
+ 
+-任务需要具备可自动评估的 oracle，例如：
++1. vLLM 0.19.1 可以用 OpenAI-compatible endpoint 服务 Qwen3.5-9B。
++2. 当前服务运行在 GPU 2。
++3. 当前端口为 8010。
++4. 对外 model name 为 `qwen35-9b`。
++5. `max_model_len=65536` 已验证可满足 OpenCode 请求。
++6. thinking 已通过 `default_chat_template_kwargs` 正确关闭。
++7. `--enable-auto-tool-choice --tool-call-parser hermes` 已验证解决 tool call 兼容问题。
+ 
+-- regression tests pass；
+-- issue-specific tests pass；
+-- patch 能被 evaluator 判定为成功。
++### 4.2 Stage 0B: Pipeline debug
+ 
+-### 4.2 初始规模与重复设计
++如果 repo checkout、测试执行、patch capture、evaluator、token tracking 已经完成验证，则标记为 completed。否则在 Stage 1 前补齐。
+ 
+-#### Stage 0: Pipeline Debug ＆ Calibration ＆ 能力预验证
++Pipeline debug checklist：
+ 
+-- 5 tasks
+-- 3 systems
+-- 每个组合 **1 run**（先用单次调试 pipeline）
+-- 共 15 runs
++* [ ] repo checkout 可复现
++* [ ] task loading 可复现
++* [ ] baseline failing test 可运行
++* [ ] OpenCode 能调用本地 vLLM endpoint
++* [ ] Build-only 能完整完成一个 run
++* [ ] subagent call 能被捕获
++* [ ] git diff 能保存为 patch
++* [ ] evaluator 能运行并返回结构化结果
++* [ ] token usage 能记录到 run-level log
++* [ ] step-level trajectory 能写入 jsonl
+ 
+-目标：
+-1. 确认 repo checkout、测试运行、patch apply、OpenCode 调用、日志记录和 token budget 能跑通。
+-2. **Calibration**：记录各系统在无预算约束下的真实 output token 分布，为 Stage 1/2 确定 budget 提供数据基础（详见 §7.2）。
+-3. 验证 evaluator 在 candidate tasks 上的可靠性。
+-4. 观察 General subagent 实际行为模式（详见 §6.4）。
+-5. **🔴 新增 — 模型能力预验证**（详见 §4.3）。
++### 4.3 Stage 0C: 模型能力预验证
+ 
+-#### Stage 1: Pilot
++Qwen3.5-9B 不是 Claude / GPT-4 级模型。在投入 Stage 2 之前，必须确认它至少有能力完成目标任务分布中的一部分任务。
+ 
+-- 10 tasks
+-- 3 systems
+-- 每个组合 **3 runs**
+-- 共 90 runs
++验证项目：
+ 
+-目标：初步观察 single vs subagent 是否有差异，并验证失败归因流程与标注可靠性。
++| 项目                    | 方法                                          | 通过标准                                 |
++| --------------------- | ------------------------------------------- | ------------------------------------ |
++| 代码理解                  | 给 issue + repo，要求 model 定位 bug 文件，不要求 patch | top-3 candidate files 命中 ≥ 60% tasks |
++| 代码生成                  | 给定 bug 位置和修复方案，要求生成 patch                   | patch 语法正确且可 apply                   |
++| Tool use              | 验证 search、open、edit、test 等 OpenCode tools   | 工具调用语法正确 ≥ 80%                       |
++| Instruction following | 禁止 subagent 时 Build 是否遵守                    | subagent 调用数为 0                      |
++| 端到端                   | 在 2 个 simple tasks 上跑完整 S1                  | 至少 1/2 生成可 apply patch               |
+ 
+-#### Stage 2: Main Pilot
++如果预验证失败：
+ 
+-- 30 tasks
+-- 3 systems
+-- 每个组合 **3 runs**
+-- 共 270 runs
++1. 不切换到 API 模型。本地小模型是实验核心设置。
++2. 优先降低任务难度，例如 curated Python bug-fix 或小型 failing-test tasks。
++3. 如果 tool use 明显失败，考虑切换到更适合代码/工具调用的本地模型，但必须记录为模型变更。
++4. 保留失败报告，因为小模型在 spawn workflow 下的能力边界本身是实验发现。
+ 
+-作为第一版实验报告主体。
++---
+ 
+-后续如信号清楚，再扩展到 100 tasks。
++## 5. 实验对象
+ 
+-#### 重复运行说明
++### 5.1 任务类型
+ 
+-- 即使 temperature=0，vLLM 推理的浮点计算仍可能在不同 GPU 或不同 run 产生微小差异。
+-- 3 次重复允许使用 mixed-effects model（task 作为 random effect）而非朴素均值比较。
++第一阶段任务为代码修复任务，优先使用：
+ 
+-### 4.3 模型能力预验证 🔴 新增
++* SWE-bench Lite / Verified 小子集；
++* curated Python bug-fix tasks；
++* 小型真实 repo 的 failing-test 修复任务。
+ 
+-Qwen3.5-9B 不是 Claude Sonnet 4。在投入 270 runs 之前，Stage 0 必须确认模型有能力完成 SWE-bench 级别的任务。
++每个任务必须具备可自动评估的 oracle，例如：
+ 
+-#### 验证项目
++* regression tests pass；
++* issue-specific tests pass；
++* patch 能被 evaluator 判定为成功。
+ 
+-| 项目 | 方法 | 通过标准 |
+-|------|------|----------|
+-| 代码理解 | 给 issue + repo，要求 model 定位 bug 文件（不给 patch 任务） | 在 top-3 candidates 中命中 ≥ 60% tasks |
+-| 代码生成 | 给定 bug 位置和修复方案，要求生成 patch | 语法正确，能 apply |
+-| Tool use | 验证 model 能否正确使用 OpenCode tools（search、edit、test） | 工具调用语法正确 ≥ 80% |
+-| Instruction following | 验证 Build 在你禁止 subagent 时是否确实不调用 | 零 subagent 调用 |
+-| 端到端 | 在 2 个已知 simple task 上跑完整 S1 run | 至少 1/2 能生成可 apply 的 patch |
++### 5.2 任务选择原则
+ 
+-#### 如果预验证失败
++任务集需要同时包含 single-agent-readable 和 multi-agent-favorable 场景，避免只构造对 multi-agent 有利的任务。
+ 
+-- 如果 Qwen3.5-9B 在 SWE-bench 级别任务上接近 0% success → 降级任务难度：
+-  - 使用 curated Python bug-fix（更短上下文、更明确 bug 描述）
+-  - 或自己构造小型 failing-test 修复任务
+-- 如果 Qwen3.5-9B 无法可靠使用 OpenCode tools → 考虑切换到 Qwen3-Coder 系列（如果可用）或降低工具复杂度
+-- **无论如何不切换到 API 模型**——本地小模型是实验的核心自变量之一
++每个任务需要具备：
+ 
+----
++1. 明确 issue / bug 描述；
++2. 可 checkout 的 repo；
++3. 可复现的初始失败；
++4. 可运行 evaluator；
++5. 可捕获 final patch；
++6. 任务难度不能全部过高，避免所有系统 success rate 接近 0。
+ 
+-## 5. 任务分层与预注册
++### 5.3 初始规模与阶段设计
+ 
+-为了避免只构造有利于 multi-agent 的任务，任务集需要包含 single-agent-readable 和 multi-agent-favorable 两类场景。
++#### Stage 1A: Pilot sanity run
+ 
+-### 5.1 复杂度特征
++```text
++10 tasks × 3 systems × 1 seed = 30 runs
++```
+ 
+-每个任务标注以下复杂度特征：
++目标：
+ 
+-```json
+-{
+-  "task_id": "...",
+-  "repo": "...",
+-  "difficulty_bucket": "local_readable | multi_file | long_context | multi_hypothesis",
+-  "estimated_repo_context_tokens": 0,
+-  "num_candidate_files": 0,
+-  "num_relevant_files": 0,
+-  "num_failing_tests": 0,
+-  "requires_cross_file_reasoning": true,
+-  "requires_parallel_hypothesis_search": false
+-}
++1. 验证完整实验执行流程；
++2. 检查日志字段是否完整；
++3. 检查 evaluator 是否稳定；
++4. 检查 subagent calls 是否能被完整捕获；
++5. 发现系统性 instrumentation bug。
++
++Stage 1A 通过后再进入 Stage 1B。
++
++#### Stage 1B: Pilot repeated runs
++
++```text
++10 tasks × 3 systems × 3 seeds = 90 runs
+ ```
+ 
+-### 5.2 分层定义
++目标：
++
++1. 初步观察 single vs subagent 是否有方向性差异；
++2. 验证 failure attribution 流程；
++3. 估计 run-to-run variance；
++4. 判断是否需要调整任务难度或预算。
++
++#### Stage 2: Main Pilot
++
++默认规模：
++
++```text
++30 tasks × 3 systems × 3 seeds = 270 runs
++```
++
++如果资源不足，可降为：
++
++```text
++30 tasks × 3 systems × 2 seeds = 180 runs
++```
++
++Stage 2 是第一版实验报告主体。
++
++---
++
++## 6. 任务分层与预注册
++
++### 6.1 Difficulty buckets
++
++每个任务标注一个主 difficulty bucket。
++
++```text
++local_readable | multi_file | long_context | multi_hypothesis
++```
+ 
+ #### local_readable
+ 
+-相关上下文较短，1–2 个文件内即可解决。预期 single agent 更稳或更便宜。
++相关上下文较短，1–2 个文件内即可解决。预期 Build-only 更稳或更便宜。
+ 
+ #### multi_file
+ 
+@@ -320,180 +421,311 @@ Qwen3.5-9B 不是 Claude Sonnet 4。在投入 270 runs 之前，Stage 0 必须
+ 
+ 存在多个可能 bug source，需要并行探索不同假设。subagent 可能通过独立探索降低漏查风险。
+ 
+-### 5.3 预注册标注协议
++### 6.2 Pre-run observable features
++
++这些字段可以作为后续 spawn policy 的输入。
++
++```json
++{
++  "task_id": "...",
++  "repo": "...",
++  "issue_length_tokens": 0,
++  "initial_test_log_length_tokens": 0,
++  "repo_file_count": 0,
++  "repo_loc_estimate": 0,
++  "initial_candidate_files_count": 0,
++  "initial_search_results_count": 0,
++  "known_failing_tests_count": 0
++}
++```
++
++### 6.3 Post-hoc oracle features
++
++这些字段只能用于分析，不能作为后续 policy 的在线输入。
++
++```json
++{
++  "task_id": "...",
++  "difficulty_bucket": "local_readable | multi_file | long_context | multi_hypothesis",
++  "num_relevant_files": 0,
++  "requires_cross_file_reasoning": true,
++  "requires_parallel_hypothesis_search": false,
++  "actual_patch_files_count": 0,
++  "actual_patch_lines_changed": 0
++}
++```
++
++注意：`num_relevant_files`、`requires_cross_file_reasoning`、`actual_patch_files_count` 等字段通常需要参考最终 patch 或人工事后分析，因此不能暴露给 agent。
++
++### 6.4 预注册标注协议
+ 
+ 为防止事后归因偏差，任务标注必须在实验执行前完成并 freeze。
+ 
+-**步骤：**
++流程：
++
++1. 初筛 candidate tasks，确保各 difficulty bucket 有足够样本。
++2. 两名标注者独立审查 issue 描述、repo 结构、test files，标注 difficulty_bucket 和 complexity features。
++3. 如果两名标注者不一致，由第三人仲裁或讨论达成共识。
++4. 标注完成后写入 `tasks.jsonl`，git commit，并在跑任何实验前 freeze。
++5. 保存原始标注文件到 `annotations/`。
+ 
+-1. **初筛**：从任务来源筛选 candidate tasks，确保各 difficulty_bucket 有足够样本（建议每个 bucket ≥ 5 tasks for Stage 1，≥ 8 for Stage 2）。
+-2. **独立标注**：两名标注者独立审查每个 task 的 issue 描述、repo 结构、test files，标注 difficulty_bucket 和所有 complexity features。
+-3. **不一致仲裁**：如两名标注者的 difficulty_bucket 不一致，由第三人仲裁或讨论达成共识。
+-4. **Freeze**：标注完成后将所有标注存入 `tasks.jsonl`，git commit，且**在跑任何实验之前** freeze。标注者不能是后续分析 failure attribution 的人（避免认知偏差传递）。
+-5. **记录**：标注协议和每名标注者的标注原始数据保存为 `annotations/` 目录下的文件。
++建议：任务标注者和失败归因标注者尽量分离，以减少认知偏差传递。
+ 
+ ---
+ 
+-## 6. 对比系统
++## 7. 对比系统
+ 
+-第一版只比较 OpenCode 原生机制下的三种系统。
++第一版主实验只比较 OpenCode 原生机制下的三种系统。
+ 
+-### S1: Build-only Single Agent
++### 7.1 S1: Build-only Single Agent
+ 
+-只使用 OpenCode primary agent `Build`。
++```text
++system = build_only
++```
+ 
+ 约束：
+ 
+-- 禁止调用 subagent。
+-- Build 直接完成 issue 理解、代码搜索、修改、测试和 patch 提交。
++* 只使用 OpenCode primary agent `Build`。
++* 禁止调用任何 subagent。
++* Build 独立完成 issue 理解、代码搜索、修改、测试和 patch 提交。
+ 
+ 目标：建立 single-agent baseline。
+ 
+-### S2: Build + Explore
++### 7.2 S2: Build + Explore
+ 
+-允许 Build 调用 OpenCode 内置 `Explore` subagent。
++```text
++system = build_explore
++```
+ 
+ 约束：
+ 
+-- Explore 只负责代码库探索、文件定位、符号搜索和 bug hypothesis。
+-- Explore 不允许修改代码。
+-- Build 负责最终 patch。
++* 允许 Build 调用 OpenCode 内置 `Explore` subagent。
++* Explore 只负责代码库探索、文件定位、符号搜索和 bug hypothesis。
++* Explore 不允许修改代码。
++* Build 负责最终 patch。
++
++Explore 的合法任务包括：
++
++* 查找相关文件；
++* 查找相关函数、类、符号；
++* 总结代码路径；
++* 根据 failing test / issue 描述提出 bug hypothesis；
++* 判断哪些文件最值得 Build 进一步阅读。
++
++Explore 的非法任务包括：
++
++* 直接修改代码；
++* 生成完整 patch；
++* 运行破坏性命令；
++* 长篇泛泛分析。
+ 
+ 目标：测试只读探索型 subagent 是否能提升代码修复效果。
+ 
+-### S3: Build + Explore + General
++### 7.3 S3: Build + Explore + General
+ 
+-允许 Build 调用 `Explore` 和 `General` 两类 subagent。
++```text
++system = build_explore_general
++```
+ 
+ 约束：
+ 
+-- Explore 用于快速只读代码探索。
+-- General 用于更复杂的分析或子任务处理。
+-- Build 仍负责最终 patch 和提交。
++* 允许 Build 调用 `Explore` 和 `General` 两类 subagent。
++* Explore 用于只读代码探索。
++* General 只允许处理明确、封闭的子任务。
++* Build 仍负责最终 patch 和提交。
++
++General 的推荐任务边界：
++
++* 分析某个具体 failing test；
++* 比较两个候选 bug hypothesis；
++* review Build 已经形成的 patch plan；
++* 检查某个局部实现是否违反已有接口约定；
++* 对某段测试日志做原因归纳。
++
++General 的禁止任务：
++
++* “随便看看整个 repo”；
++* “帮我完整解决这个 issue”；
++* 未限定范围的大规模探索；
++* 未经 Build 整合直接提交 patch。
+ 
+ 目标：测试 OpenCode 原生多 subagent 可用时，dynamic spawn 是否优于 Build-only 与 Build+Explore。
+ 
+-### 6.4 Stage 0: General Subagent 行为观察
++### 7.4 Stage 0 / Stage 1: General 行为观察
+ 
+-`General` subagent 的定义在 OpenCode 中较为宽泛（"更复杂的分析或子任务处理"）。如果 General 与 Explore 的实际行为高度重叠，S3 vs S2 将没有信号。此外，Qwen3.5-9B 对 OpenCode subagent 指令的遵循程度未知。
++General subagent 的定义较宽泛。如果 General 与 Explore 的实际行为高度重叠，S3 vs S2 将没有清晰信号。
+ 
+-因此在 Stage 0 必须完成以下观察：
++观察内容：
+ 
+-**观察内容：**
++* General 被 Build 调用时，Build 给出的任务是什么；
++* General 实际是在搜索、分析、生成 patch，还是 review；
++* General 与 Explore 在相同 task 下是否表现出差异；
++* Qwen3.5-9B 是否遵守 Explore 只读约束；
++* Qwen3.5-9B 是否把 General 当成另一个 Build 来使用。
+ 
+-- General 被 Build 调用时的 prompt 内容（Build 要求 General 做什么？）
+-- General 的实际输出模式（代码探索？分析推理？代码生成？）
+-- General 与 Explore 在相同 task 下的行为差异
+-- 是否有 task 类型天然适合 General 而非 Explore
+-- Qwen3.5-9B 是否遵守 "Explore 只读" 约束
++判定标准：
+ 
+-**判定标准：**
++* 如果 General 和 Explore 在 ≥70% 的 runs 中行为高度重叠，Stage 2 可以考虑弱化 S3 结论，或将其标记为 “additional subagent availability” 而不是 “distinct General role”。
++* 如果 General 表现出独特价值，例如 test explanation、hypothesis comparison、patch review，则保留 S3 主比较。
++* 如果 Explore 频繁违反只读约束，应报告为模型 instruction-following 限制，并在 system prompt 或 harness 权限层面强制只读。
+ 
+-- 如果 General 和 Explore 在 ≥70% 的 runs 中行为高度重叠 → 考虑 S3 仅用 Build+Explore，或替换为更差异化的 subagent
+-- 如果 General 表现出独特行为模式（如：分析已有文件内容得出结构性结论，而非搜索新文件）→ 保留但记录行为差异
+-- 如果 Qwen3.5-9B 频繁违反 subagent 约束（如 Explore 修改代码）→ 报告为模型限制，考虑在 system prompt 中强化约束
++### 7.5 可选 ablation systems
++
++这些系统不进入 Stage 1 默认主实验。只有 Stage 2 后资源允许时再加入。
++
++#### S2-forced: Build forced Explore once
++
++目的：区分 Explore 本身是否有用，与 OpenCode native policy 是否会正确调用 Explore。
++
++约束：
++
++* 每个任务开始后，Build 必须先调用一次 Explore。
++* Explore 返回后，Build 再决定后续是否继续调用。
++
++#### S3-forced-explore: Build forced Explore, General optional
++
++目的：测试 General 的边际价值，而不是把 Explore 是否被调用混入 S3 结果。
+ 
+ ---
+ 
+-## 7. 预算控制
++## 8. 预算控制
++
++### 8.1 核心原则
+ 
+-### 7.1 核心原则
++本实验主预算是 output token，而不是 API cost。
+ 
+-本实验不强制限制所有 agent 可读取的输入上下文总量。因为真实 coding-agent 场景中，multi-agent 的优势之一就是不同 agent 可以阅读不同文件或日志。
++原因：
+ 
+-但必须记录 total input tokens（跨所有 agent 求和），并在分析中作为协变量控制，以区分 "spawn 操作本身的价值" 与 "多读了文件导致成功率提升"。
++1. 本地推理没有外部 API 费用；
++2. output token 直接决定 GPU 推理时间；
++3. output cap 可以防止 subagent workflow 通过无限生成获得优势。
+ 
+-对于 output tokens，使用 calibration-based budget。在本地推理场景中，output cap 直接决定了 per-run 推理时间，是比 API cost 更实际的约束。
++本实验不强制限制所有 agent 可读取的输入上下文总量。因为真实 coding-agent 场景中，multi-agent 的潜在优势之一就是不同 agent 可以阅读不同文件或日志。
+ 
+-### 7.2 Calibration-Based Budget 确定
++但必须记录 total input tokens，并在分析中作为协变量控制，以区分：
+ 
+-**步骤：**
++```text
++spawn 架构带来的收益
++vs
++multi-agent 多读文件带来的收益
++```
+ 
+-1. Stage 0 运行时**不设 output cap**（或设一个远高于预期的宽松上限，如 100k tokens）。
+-2. 记录每个系统在每个 task 上的真实 output token 消费，得到分布。
+-3. 取 S1（Build-only）在全部 5 个 task 上的 **median output tokens**，记为 `M_s1`。
+-4. Stage 1/2 的 per-task budget 设为：
++### 8.2 Calibration-based output budget
++
++在正式 Stage 1B / Stage 2 前，使用 Stage 1A 或 calibration runs 估计 S1 的自然 output token 消耗。
++
++步骤：
++
++1. 在 calibration runs 中设置宽松 output cap，例如 100k tokens，或不设外部 cap。
++2. 记录 S1 在所有 calibration tasks 上的真实 output token 消费。
++3. 计算 S1 median output tokens，记为 `M_s1`。
++4. Stage 1B / Stage 2 的 per-task budget 设为：
+ 
+ ```text
+ per-task total output cap = M_s1 × 1.5
+ ```
+ 
+-**理由：**
++如 `M_s1 × 1.5` 明显过高，可设绝对上限，例如：
++
++```text
++absolute output cap = 64000
++```
+ 
+-- 基于 S1 的实际消费设定 baseline，而非人工猜测。
+-- ×1.5 系数给 S2/S3 留出 orchestration 空间，避免 budget 系统性地对 multi-agent 不利（S2/S3 有 coordination overhead，S1 没有）。
+-- 如 Stage 0 数据显示 S1 的 output 已经很高（如 80k+），可考虑用 75th percentile 替代 median，或设绝对 cap（如 64k）。
++### 8.3 Equal generation budget
+ 
+-### 7.3 系统预算分配（Equal-output-token budget）
++主实验使用：
+ 
+ ```text
+-S1 Build-only:              Build output ≤ cap
+-S2 Build + Explore:         Build + Explore output ≤ cap
+-S3 Build + Explore + General: Build + Explore + General output ≤ cap
++Equal generation budget
+ ```
+ 
+-Dynamic 系统（S2、S3）可自由分配预算，但总输出不得超过 cap。
++各系统预算：
+ 
+-**实施方式：** OpenCode 提供 token tracking 机制。当累计 output tokens 接近 cap 时（如达到 90%），向 primary agent 注入 warning message 提示 budget 即将耗尽。
++```text
++S1: Build output ≤ cap
++S2: Build + Explore output ≤ cap
++S3: Build + Explore + General output ≤ cap
++```
++
++说明：这不是 equal compute budget。multi-agent 系统仍可能使用更多 input tokens、更多 tool calls 或更多 wall-clock time。因此必须记录并分析这些成本。
+ 
+-### 7.4 记录但不强控的成本
++### 8.4 Budget warning 与终止
+ 
+-所有 runs 必须记录：
++当累计 output tokens 达到 cap 的 90% 时，harness 应向 Build 注入 warning：
+ 
+-- **Per-agent input tokens**（每个 agent 的独立输入量）
+-- **Total input tokens**（跨所有 agent 求和）
+-- **Per-agent output tokens**
+-- **Total output tokens**
+-- total tokens
+-- tool calls
+-- wall-clock runtime
+-- **GPU inference time**（各 agent 占用 GPU 的实际推理时长）
+-- subagent call count
+-- tokens per success
++```text
++You are close to the experiment output budget. Prioritize final patch, tests, and concise reasoning.
++```
+ 
+-### 7.5 输入 Token 的协变量分析
++当累计 output tokens 达到 cap 时：
+ 
+-由于不控制输入 token，multi-agent 系统可能天然阅读更多文件。为分离此效应：
++1. 终止 run；
++2. 保存当前日志和 patch；
++3. 标记 `budget_error` 或 `incomplete_due_to_budget`；
++4. 仍运行 evaluator，如果存在 patch。
+ 
+-1. **记录** 每 run 的 total_input_tokens（跨所有 agent）。
+-2. **分析时** 将 total_input_tokens 作为协变量纳入统计模型：
++### 8.5 必须记录但不强控的成本
++
++每个 run 必须记录：
++
++* per-agent input tokens；
++* total input tokens；
++* per-agent output tokens；
++* total output tokens；
++* total tokens；
++* tool calls；
++* wall-clock runtime；
++* GPU inference time；
++* subagent call count；
++* files opened；
++* files edited；
++* test command count；
++* final patch size；
++* tokens per success。
++
++### 8.6 输入 token 协变量分析
++
++分析模型：
+ 
+ ```text
+-success ~ system + total_input_tokens + difficulty_bucket + (1|task_id)
++success ~ system + total_input_tokens + difficulty_bucket + (1 | task_id)
+ ```
+ 
+-3. **解释**：如果加入 input_tokens 协变量后 system 效应仍显著，说明 spawn 操作的价值独立于多读文件；如果不再显著，说明 multi-agent 的优势主要来自上下文覆盖而非 spawn 架构。
++解释：
++
++* 如果控制 total_input_tokens 后 system 效应仍存在，说明 spawn workflow 的收益不只是“多读文件”。
++* 如果控制 total_input_tokens 后 system 效应消失，说明 multi-agent 的优势主要来自上下文覆盖，而不是 subagent 架构本身。
+ 
+-### 7.6 Natural-budget 附加设置
++### 8.7 Natural-budget 附加设置
+ 
+ 如资源允许，可以追加 Natural-budget setting：
+ 
+-- 各系统按真实 OpenCode workflow 运行；
+-- 不强行统一 output cap；
+-- 记录真实成本和 GPU 时间；
+-- 用于分析真实使用时的 success-cost tradeoff。
++* 各系统按真实 OpenCode workflow 运行；
++* 不强行统一 output cap；
++* 记录真实成本和 GPU 时间；
++* 用于分析真实使用时的 success-cost tradeoff。
+ 
+-第一版主表以 Equal-output-budget 为主，Natural-budget 作为附表或后续实验。
++Natural-budget 不作为第一版主结论的唯一依据。
+ 
+ ---
+ 
+-## 8. 工具与执行环境
++## 9. 工具与执行环境
+ 
+-所有系统使用统一代码仓库环境与测试接口。
++### 9.1 统一工具集
+ 
+-### 8.1 工具集
++所有系统使用统一代码仓库环境与测试接口。
+ 
+ 需要支持：
+ 
+-- repo checkout
+-- issue/task loading
+-- code search
+-- file open
+-- file edit
+-- test execution
+-- git diff capture
+-- patch submission
+-- evaluator execution
++* repo checkout；
++* issue/task loading；
++* code search；
++* file open；
++* file edit；
++* test execution；
++* git diff capture；
++* patch submission；
++* evaluator execution。
+ 
+ 所有工具调用必须记录：
+ 
+@@ -501,56 +733,65 @@ success ~ system + total_input_tokens + difficulty_bucket + (1|task_id)
+ {
+   "tool": "search_code | open_file | edit_file | run_tests | git_diff | submit_patch",
+   "agent": "build | explore | general",
+-  "args": {},
++  "args_summary": {},
+   "result_summary": "...",
+   "success": true,
+   "runtime_sec": 0
+ }
+ ```
+ 
+-### 8.2 Patch Evaluator 规范
++### 9.2 Patch evaluator 规范
+ 
+-使用 **SWE-bench 官方 evaluation harness**（或等效的自动化评估脚本）。
++使用 SWE-bench 官方 evaluation harness 或等效自动化评估脚本。
+ 
+-**成功标准：**
++成功标准：
+ 
+-- **Primary**：所有 regression tests 通过，且 issue-specific tests（如有标注）通过。
+-- **Secondary**：仅 issue-specific tests 通过（regression 允许部分失败，但需记录）。
+-- **Fail**：regression tests 或 issue-specific tests 仍失败。
++```text
++Primary success:
++  all regression tests pass
++  and issue-specific tests pass, if available
++
++Secondary success:
++  issue-specific tests pass
++  but regression tests unavailable or partially failing
++
++Fail:
++  issue-specific tests fail
++  or regression tests fail
++  or patch cannot apply
++```
+ 
+-**Evaluator 可靠性验证（Stage 0）：**
++### 9.3 Evaluator 可靠性验证
+ 
+-1. 在 5 个 candidate task 上，对 ground-truth patch 运行 evaluator，确认得到 expected pass。
+-2. 对每个 task 注入一个 knowingly-broken patch，确认 evaluator 能检测到 failure。
+-3. 记录 flaky test 情况：如某 task 的同一 patch 在多次 evaluator 运行中结果不一致（flaky），标记该 task 并在分析时排除或单独处理。
++Stage 1 前必须验证 evaluator。
+ 
+-### 8.3 OpenCode + vLLM 集成 🟡 新增
++验证方式：
+ 
+-OpenCode 通过 OpenAI-compatible API 连接本地 vLLM 实例。
++1. 对 candidate tasks 的 ground-truth patch 运行 evaluator，确认 expected pass。
++2. 对每个 task 注入 knowingly-broken patch，确认 evaluator 能检测 failure。
++3. 对同一 patch 重复 evaluator，检测 flaky tests。
++4. 标记 flaky task，并在分析时排除或单独报告。
+ 
+-#### 配置要点
++### 9.4 OpenCode + vLLM integration checklist
+ 
+-```yaml
+-# OpenCode config (示例)
+-provider: openai_compatible
+-base_url: http://localhost:8000/v1
+-api_key: not-needed                    # vLLM 本地推理无需认证
+-model: qwen3.5-9b                      # 模型标识符
+-```
+-
+-#### 验证清单（Stage 0）
++Stage 1A 前确认：
+ 
+-- [ ] OpenCode 能成功发起 chat completion 请求到 vLLM
+-- [ ] OpenCode 的 tool call 格式与 Qwen3.5-9B 的 function calling 兼容
+-- [ ] vLLM 返回的 token usage 可以被 OpenCode 正确解析
+-- [ ] OpenCode 的 subagent spawn 能正确配置为使用同一 vLLM endpoint
+-- [ ] GPU OOM 或推理超时时有 graceful failure（不丢失已记录日志）
++* [ ] OpenCode 能成功发起 chat completion 到 `http://localhost:8010/v1`。
++* [ ] OpenCode 使用 model name `qwen35-9b`。
++* [ ] thinking 已关闭。
++* [ ] Hermes tool parser 已启用。
++* [ ] OpenCode tool call 格式与 vLLM 返回兼容。
++* [ ] token usage 可以被解析。
++* [ ] subagent spawn 可以走同一 endpoint。
++* [ ] GPU OOM 或推理超时时不会丢失已有日志。
+ 
+ ---
+ 
+-## 9. 日志格式
++## 10. 日志格式
+ 
+-每个 run 保存为一条 JSONL。
++### 10.1 Run-level 日志
++
++每个 run 保存为 `runs.jsonl` 的一行。
+ 
+ ```json
+ {
+@@ -558,18 +799,27 @@ model: qwen3.5-9b                      # 模型标识符
+   "task_id": "...",
+   "repo": "...",
+   "system": "build_only | build_explore | build_explore_general",
+-  "budget_setting": "equal_output | natural",
++  "budget_setting": "equal_generation | natural | equal_total_tokens | equal_tool_calls",
++  "seed": 0,
++  "model": "qwen35-9b",
++  "vllm_endpoint": "http://localhost:8010/v1",
++  "gpu_id": 2,
++  "max_model_len": 65536,
++  "thinking_enabled": false,
++  "tool_parser": "hermes",
+   "difficulty_bucket": "local_readable | multi_file | long_context | multi_hypothesis",
+   "issue": "...",
+-  "final_patch": "...",
+   "success": true,
+   "tests_pass": true,
++  "patch_apply_success": true,
+   "eval_result": {
+     "regression_tests_total": 0,
+     "regression_tests_passed": 0,
+     "issue_tests_total": 0,
+-    "issue_tests_passed": 0
++    "issue_tests_passed": 0,
++    "raw_log_path": "..."
+   },
++  "final_patch_path": "patches/<run_id>.patch",
+   "token_usage": {
+     "input_tokens": {
+       "build": 0,
+@@ -592,274 +842,437 @@ model: qwen3.5-9b                      # 模型标识符
+     "general": 0,
+     "total": 0
+   },
+-  "gpu_id": 0,
+   "tool_calls": {
+     "build": 0,
+     "explore": 0,
+     "general": 0,
+     "total": 0
+   },
+-  "subagent_calls": [
+-    {
+-      "call_id": "...",
+-      "subagent": "explore | general",
+-      "context_pass_summary": "...",
+-      "input_summary": "...",
+-      "output_summary": "...",
+-      "output_tokens": 0,
+-      "input_tokens": 0,
+-      "gpu_inference_sec": 0,
+-      "used_by_build": true,
+-      "help_label": "helped | harmed | neutral | unknown"
+-    }
+-  ],
++  "files_opened": [],
++  "files_edited": [],
++  "test_commands": [],
++  "subagent_calls": [],
+   "failure_analysis": {
+-    "failed": true,
+-    "annotator_1": {
+-      "primary_failure_type": "...",
+-      "secondary_failure_types": [],
+-      "notes": "..."
+-    },
+-    "annotator_2": {
+-      "primary_failure_type": "...",
+-      "secondary_failure_types": [],
+-      "notes": "..."
+-    },
+-    "consensus_failure_type": "...",
+-    "agreement": true
++    "failed": false,
++    "primary_failure_type": "none",
++    "failure_tags": [],
++    "notes": ""
++  }
++}
++```
++
++### 10.2 Step-level trajectory 日志
++
++后续 offline policy learning 需要 step-level trajectory。每个 run 保存一个独立文件：
++
++```text
++logs/trajectories/<run_id>.jsonl
++```
++
++每一行格式：
++
++```json
++{
++  "run_id": "...",
++  "step": 0,
++  "timestamp": "...",
++  "actor": "Build | Explore | General | evaluator | system",
++  "event_type": "message | tool_call | subagent_call | edit | test | diff | submit | error",
++  "action": "...",
++  "input_summary": "...",
++  "output_summary": "...",
++  "tool_name": "search_code | open_file | edit_file | run_tests | git_diff | submit_patch | none",
++  "tool_args_summary": {},
++  "result_summary": "...",
++  "success": true,
++  "runtime_sec": 0,
++  "cost_delta": {
++    "input_tokens": 0,
++    "output_tokens": 0,
++    "total_tokens": 0
++  },
++  "budget_remaining": {
++    "output_tokens": 0
+   }
+ }
+ ```
+ 
++### 10.3 Subagent call 日志
++
++每次 subagent call 必须记录为结构化对象。
++
++```json
++{
++  "call_id": "...",
++  "parent_run_id": "...",
++  "parent_actor": "Build",
++  "subagent": "Explore | General",
++  "call_step": 0,
++  "task_given": "...",
++  "context_pass_summary": "...",
++  "input_summary": "...",
++  "output_summary": "...",
++  "input_tokens": 0,
++  "output_tokens": 0,
++  "gpu_inference_sec": 0,
++  "runtime_sec": 0,
++  "files_opened_by_subagent": [],
++  "symbols_identified": [],
++  "hypotheses_proposed": [],
++  "used_by_build": true,
++  "introduced_key_file": false,
++  "introduced_key_symbol": false,
++  "introduced_correct_hypothesis": false,
++  "narrowed_search_space": false,
++  "explained_failing_test": false,
++  "misled_primary": false,
++  "net_effect": "helped | harmed | neutral | unknown"
++}
++```
++
++### 10.4 Subagent 边际信息增益判断
++
++判断 subagent 是否有边际价值时，优先使用客观标准：
++
++* 是否首次指出最终 patch 涉及文件；
++* 是否首次指出关键函数、类或符号；
++* 是否提出最终正确 bug hypothesis；
++* 是否缩小候选文件范围；
++* 是否解释 failing test 的真实原因；
++* Build 是否显式采纳其输出。
++
++不要仅因为最终 run 成功就标记 subagent 为 `helped`。也不要仅因为最终 run 失败就标记 subagent 为 `harmed`。
++
+ ---
+ 
+-## 10. 核心指标与统计分析
++## 11. 核心指标与统计分析
+ 
+-### 10.1 任务成功指标
++### 11.1 任务成功指标
+ 
+-- `task_success_rate`
+-- `tests_pass_rate`
+-- `patch_apply_success_rate`
++* `task_success_rate`
++* `tests_pass_rate`
++* `patch_apply_success_rate`
+ 
+-### 10.2 成本指标
++### 11.2 成本指标
+ 
+-- `output_tokens_per_task`
+-- `output_tokens_per_success`
+-- `runtime_per_task`
+-- `gpu_inference_sec_per_task`
+-- `tool_calls_per_task`
+-- `subagent_calls_per_task`
++* `output_tokens_per_task`
++* `output_tokens_per_success`
++* `total_tokens_per_success`
++* `runtime_per_task`
++* `gpu_inference_sec_per_task`
++* `tool_calls_per_task`
++* `subagent_calls_per_task`
+ 
+-### 10.3 架构对比指标
++### 11.3 架构对比指标
+ 
+-- `build_explore_delta = success(Build+Explore) - success(Build-only)`
+-- `build_explore_general_delta = success(Build+Explore+General) - success(Build-only)`
+-- `general_marginal_gain = success(Build+Explore+General) - success(Build+Explore)`
++```text
++build_explore_delta = success(S2) - success(S1)
++build_explore_general_delta = success(S3) - success(S1)
++general_marginal_gain = success(S3) - success(S2)
++```
+ 
+-### 10.4 subagent 使用指标
++### 11.4 Subagent 使用指标
+ 
+-- `subagent_call_rate`
+-- `explore_call_rate`
+-- `general_call_rate`
+-- `explore_help_rate`
+-- `general_help_rate`
+-- `subagent_harm_rate`
+-- `unnecessary_subagent_rate`
++* `subagent_call_rate`
++* `explore_call_rate`
++* `general_call_rate`
++* `explore_help_rate`
++* `general_help_rate`
++* `subagent_harm_rate`
++* `unnecessary_subagent_rate`
++* `introduced_key_file_rate`
++* `introduced_key_symbol_rate`
++* `introduced_correct_hypothesis_rate`
++* `misled_primary_rate`
+ 
+-### 10.5 失败归因指标
++### 11.5 失败归因指标
+ 
+-- `explore_missed_rate`
+-- `general_noise_rate`
+-- `integration_error_rate`
+-- `patch_error_rate`
+-- `test_error_rate`
+-- `budget_error_rate`
+-- `environment_error_rate`
++* `explore_missed_rate`
++* `general_noise_rate`
++* `integration_error_rate`
++* `patch_error_rate`
++* `test_error_rate`
++* `budget_error_rate`
++* `environment_error_rate`
+ 
+-### 10.6 任务复杂度交互
++### 11.6 任务复杂度交互
+ 
+ 按以下维度分组分析：
+ 
+-- difficulty_bucket
+-- estimated_repo_context_tokens
+-- num_candidate_files
+-- num_relevant_files
+-- requires_cross_file_reasoning
+-- requires_parallel_hypothesis_search
+-
+-重点看：
++* difficulty_bucket；
++* issue_length_tokens；
++* initial_test_log_length_tokens；
++* repo_file_count；
++* initial_candidate_files_count；
++* num_relevant_files；
++* requires_cross_file_reasoning；
++* requires_parallel_hypothesis_search。
+ 
+-> subagent workflow 的收益是否随任务复杂度上升而增加。
++重点问题：
+ 
+-### 10.7 统计分析方法预声明
++```text
++subagent workflow 的收益是否随任务复杂度上升而增加？
++```
+ 
+-以下统计方法在实验执行前声明，防止 p-hacking。
++### 11.7 统计分析方法预声明
+ 
+-#### 主效应检验
++#### 主效应模型
+ 
+-**Model：** Mixed-effects logistic regression
++使用 mixed-effects logistic regression：
+ 
+ ```r
+-glmer(success ~ system + difficulty_bucket + log(total_input_tokens) + (1|task_id),
+
+...27220 bytes truncated...
+
+The tool call succeeded but the output was truncated. Full output saved to: /home/jinxu/.local/share/opencode/tool-output/tool_dd85b612c001GZs7kQbwSbURcV
+Use the Task tool to have explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.
+[0m
+Bug fixed and test passed. Test output shows:
+```
+test_calculator.py::test_add PASSED [100%]
+```
+
+Git diff shows changes to diff/calculator.py where `return a - b` was changed to `return a + b` in the add() function.
