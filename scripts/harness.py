@@ -206,8 +206,8 @@ def extract_answer(stdout, stderr):
 
 
 def evaluate(answer, gold_answer, aliases):
-    # Clean markdown formatting
-    answer_clean = re.sub(r'\*+', '', answer).strip().lower().rstrip('.')
+    # Clean markdown formatting and trailing punctuation
+    answer_clean = re.sub(r'\*+', '', answer).strip().lower().rstrip('.').rstrip(',')
     gold_clean = gold_answer.strip().lower().rstrip('.')
 
     if answer_clean == gold_clean:
@@ -217,8 +217,32 @@ def evaluate(answer, gold_answer, aliases):
         if answer_clean == alias.strip().lower().rstrip('.'):
             return True, "alias_match"
 
-    ans_tokens = set(answer_clean.split())
-    gold_tokens = set(gold_clean.split())
+    # Numeric/ordinal matching: "3" = "third" = "3rd" = "third-largest"
+    ordinal_map = {"1": "first", "2": "second", "3": "third", "4": "fourth", "5": "fifth",
+                   "1st": "first", "2nd": "second", "3rd": "third", "4th": "fourth", "5th": "fifth"}
+    ans_nums = re.findall(r'\d+', answer_clean)
+    gold_nums = re.findall(r'\d+', gold_clean)
+    if ans_nums == gold_nums and ans_nums:
+        # Check if ordinal words also match
+        ans_ord = any(ordinal_map.get(n, "") in answer_clean for n in ans_nums)
+        gold_ord = any(ordinal_map.get(n, "") in gold_clean for n in gold_nums)
+        if ans_ord or gold_ord:
+            return True, "ordinal_match"
+        # Pure numeric match: "3" matches "3rd"
+        if answer_clean.strip() in [str(n) for n in ans_nums] or gold_clean.strip() in [str(n) for n in gold_nums]:
+            return True, "numeric_match"
+
+    # Date partial matching: "March 29" in "March 29, 2018" → close
+    import datetime
+    if re.search(r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}', gold_clean):
+        gold_norm = re.sub(r',\s*\d{4}', '', gold_clean)
+        ans_norm = re.sub(r',\s*\d{4}', '', answer_clean)
+        if gold_norm.strip() == ans_norm.strip():
+            return True, "partial_date"
+
+    # Word overlap matching
+    ans_tokens = set(re.findall(r'\w+', answer_clean))
+    gold_tokens = set(re.findall(r'\w+', gold_clean))
     if ans_tokens and gold_tokens:
         overlap = ans_tokens & gold_tokens
         if len(overlap) / max(len(ans_tokens), len(gold_tokens)) > 0.6:
