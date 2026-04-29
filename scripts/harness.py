@@ -151,8 +151,11 @@ def prepare_workdir(run_id, task):
 
 
 def run_opencode(workdir, prompt, agent="build", timeout=300, log_suffix=""):
-    """Run OpenCode with specified agent, return stdout and stderr."""
+    """Run OpenCode with specified agent. stdout/stderr written to files, returned as content."""
     suffix = f"_{log_suffix}" if log_suffix else ""
+    stdout_file = f"{workdir}/stdout{suffix}.txt"
+    stderr_file = f"{workdir}/stderr{suffix}.txt"
+
     cmd = [
         OPENCODE_BIN, "run",
         "--agent", agent,
@@ -162,30 +165,30 @@ def run_opencode(workdir, prompt, agent="build", timeout=300, log_suffix=""):
         prompt
     ]
 
-    stderr_file = f"{workdir}/opencode_stderr_raw{suffix}.txt"
-
     start = time.time()
-    with open(stderr_file, "w") as stderr_f:
+    with open(stdout_file, "w", buffering=1) as stdout_f, \
+         open(stderr_file, "w", buffering=1) as stderr_f:
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=stderr_f,
-            text=True, cwd=workdir
+            cmd, stdout=stdout_f, stderr=stderr_f,
+            text=True, cwd=workdir, bufsize=1
         )
         try:
-            stdout, _ = proc.communicate(timeout=timeout)
+            exit_code = proc.wait(timeout=timeout)
+            timeout_flag = False
         except subprocess.TimeoutExpired:
             proc.kill()
-            stdout, _ = proc.communicate()
-            elapsed = timeout
+            proc.wait()
+            exit_code = proc.returncode
             timeout_flag = True
-        else:
-            elapsed = time.time() - start
-            timeout_flag = False
+    elapsed = time.time() - start
 
+    with open(stdout_file) as f:
+        stdout = f.read()
     with open(stderr_file) as f:
         stderr = f.read()
 
-    return {"stdout": stdout or "", "stderr": stderr or "",
-            "exit_code": proc.returncode, "runtime_sec": elapsed,
+    return {"stdout": stdout, "stderr": stderr,
+            "exit_code": exit_code, "runtime_sec": elapsed,
             "timeout": timeout_flag}
 
 
