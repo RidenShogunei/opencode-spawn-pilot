@@ -1,64 +1,86 @@
-# Stage 1 Configuration - OpenCode-Native Spawn Pilot
-# Qwen3.5-9B + vLLM 0.19.1
-
-benchmark:
-  name: MuSiQue + HotpotQA (Multi-hop QA)
-  source: MuSiQue (dgslibisey/MuSiQue) + HotpotQA (hotpotqa/hotpot_qa)
-  task_count: 10
-  difficulty_buckets:
-    local_readable: [musique_2hop_001, musique_2hop_002, musique_2hop_003]
-    multi_file: [musique_3hop_004, musique_3hop_005, musique_3hop_006]
-    long_context: [musique_4hop_007, musique_4hop_008]
-    multi_hypothesis: [hotpotqa_comp_009, hotpotqa_comp_010]
+# Stage 1 MuSiQue Multi-hop QA Experiment Config
+# OpenCode-Native Spawn Pilot v0.4
 
 experiment:
-  stage: 1A
-  tasks: 10
-  systems: [build_only, build_explore, build_explore_general]
-  seeds: [42]
+  name: opencode_spawn_pilot_stage1
+  benchmark: MuSiQue (dgslibisey/MuSiQue)
+  task_count: 10
+  systems:
+    - build_only
+    - build_explore
+    - build_explore_general
+  seeds: 1
   total_runs: 30
 
-budget:
-  type: equal_generation
-  per_task_output_cap: 16000  # generous for pilot, calibrate after Stage 1A
-  budget_warning_at: 0.9
-
-vllm:
-  base_url: http://localhost:8010/v1
-  model: qwen35-9b
-  gpu: 2
+model:
+  family: Qwen3.5-9B
+  served_name: qwen35-9b
+  local_path: /home/jinxu/.cache/tiny-agents/models/Qwen/Qwen3.5-9B/
   max_model_len: 65536
   thinking_enabled: false
-  tool_call_parser: qwen3_coder
-  enable_auto_tool_choice: true
-  enable_prefix_caching: true
+
+vllm:
+  engine: vLLM 0.19.1
+  gpu: 2
+  port: 8010
+  base_url: http://localhost:8010/v1
   gpu_memory_utilization: 0.85
   enforce_eager: true
+  enable_prefix_caching: true
+  enable_auto_tool_choice: true
+  tool_call_parser: qwen3_coder
+  max_num_seqs: 4
+  tensor_parallel_size: 1
 
 opencode:
   provider: openai_compatible
-  endpoint: http://127.0.0.1:8010/v1
+  base_url: http://127.0.0.1:8010/v1
+  api_key: not-needed
   model: qwen35-9b
-  temperature: 0.0
 
-systems:
-  s1_build_only:
-    agent: Build
-    subagents: []
-    constraints: ["No subagent calls allowed"]
+agents:
+  build:
+    type: Build
+    model: qwen35-9b
+    temperature: 0.0
+    endpoint: http://localhost:8010/v1
+    per_turn_max_output_tokens: 8192
+  explore:
+    type: Explore
+    model: qwen35-9b
+    temperature: 0.0
+    endpoint: http://localhost:8010/v1
+    permission: read_only
+    per_turn_max_output_tokens: 4096
+  general:
+    type: General
+    model: qwen35-9b
+    temperature: 0.0
+    endpoint: http://localhost:8010/v1
+    permission: bounded_subtask
+    per_turn_max_output_tokens: 4096
 
-  s2_build_explore:
-    agent: Build
-    subagents: [Explore]
-    constraints: ["Explore is read-only", "Explore for document search only"]
+budget:
+  type: equal_generation
+  calibration_median_tokens: null
+  per_task_output_cap: 16384
+  budget_warning_threshold: 0.9
 
-  s3_build_explore_general:
-    agent: Build
-    subagents: [Explore, General]
-    constraints: ["Explore read-only", "General for bounded subtask analysis"]
+difficulty_buckets:
+  local_readable:
+    description: 1-2 hops, answer found in few documents
+    expected_single_agent_sufficient: true
+  multi_file:
+    description: 3 hops, requires tracing across multiple supporting documents
+    expected_subagent_benefit: possible
+  long_context:
+    description: 4 hops, many distractors, single agent may miss connections
+    expected_subagent_benefit: likely
+  multi_hypothesis:
+    description: Multiple candidate interpretations, parallel exploration beneficial
+    note: not yet represented in MuSiQue, reserved for expansion
 
 evaluation:
-  metric: exact_match_or_alias
-  aliases_field: answer_aliases
-  case_sensitive: false
-  normalize: true  # strip, lowercase, remove articles
+  metric: answer_match  # exact match against answer + answer_aliases
+  primary: exact_match
+  secondary: token_f1

@@ -1,0 +1,128 @@
+{
+  "id": "2hop__623501_297043",
+  "question": "What watercourse is the river on which the Lostock Dam is located the mouth of?",
+  "answer": "Hunter River",
+  "answer_aliases": [],
+  "paragraphs": [
+    {
+      "idx": 0,
+      "title": "Geographical feature",
+      "text": "Geographical features are man - made or naturally - created features of the Earth. Natural geographical features consist of landforms and ecosystems. For example, terrain types, physical factors of the environment) are natural geographical features. Conversely, human settlements or other engineered forms are considered types of artificial geographical features.",
+      "is_supporting": false
+    },
+    {
+      "idx": 1,
+      "title": "Natural Dam, Arkansas",
+      "text": "Natural Dam is an unincorporated community in Crawford County, Arkansas, United States. Natural Dam is located on Arkansas Highway 59, north-northwest of Cedarville. Natural Dam has a post office with ZIP code 72948. Lee Creek Bridge, which is listed on the National Register of Historic Places, is located in the community.",
+      "is_supporting": false
+    },
+    {
+      "idx": 2,
+      "title": "List of crossings of the Kiskiminetas River",
+      "text": "This is a complete list of bridges and dams that span the Kiskiminetas River from its confluence at the Conemaugh River and Loyalhanna Creek to its mouth at the Allegheny River.",
+      "is_supporting": false
+    },
+    {
+      "idx": 3,
+      "title": "Wolli Creek",
+      "text": "Wolli Creek () is an urban watercourse of the Cooks River catchment located in the southern suburbs of Sydney, in New South Wales, Australia.",
+      "is_supporting": false
+    },
+    {
+      "idx": 4,
+      "title": "Enloe Dam and Powerplant",
+      "text": "The Enloe Dam, also known as the Similkameen Dam, and its powerplant are located on the Similkameen River about west-northwest of Oroville, Washington. Located just above Similkameen (Coyote) Falls, the concrete arch-gravity dam stands about high, with a crest length of about , built between 1916 and 1923. The dam was named after the president of the Okanogan Valley Power Company, Eugene Enloe. The dam was operated to generate power at its powerplant, located about downstream from the dam. Lacking fish ladders, Enloe Dam blocks fish passage and completely extirpated anadromous fish migration into the upper reaches of the Similkameen River and its tributaries in Canada.",
+      "is_supporting": false
+    },
+    {
+      "idx": 5,
+      "title": "Lansdowne River",
+      "text": "Lansdowne River, a watercourse of the Manning River catchment, is located in the Mid North Coast district of New South Wales, Australia.",
+      "is_supporting": false
+    },
+    {
+      "idx": 6,
+      "title": "Doubtful Creek",
+      "text": "Doubtful Creek, formerly known as Doubtful River, a watercourse that is part of the Murrumbidgee catchment within the Murray–Darling basin, is located in the Snowy Mountains district of New South Wales, Australia.",
+      "is_supporting": false
+    },
+    {
+      "idx": 7,
+      "title": "Bardwell Creek",
+      "text": "Bardwell Creek, an urban watercourse of the Cooks River catchment, is located in the southern suburbs of Sydney, in New South Wales, Australia.",
+      "is_supporting": false
+    },
+    {
+      "idx": 8,
+      "title": "Joe Wheeler State Park",
+      "text": "Joe Wheeler State Park is a state-owned, public recreation area with resort features located on Wheeler Lake, an impoundment of the Tennessee River in northwest Alabama. The state park contains of land in three separate parcels and adjoins the Tennessee Valley Authority's Wheeler Dam.",
+      "is_supporting": false
+    },
+    {
+      "idx": 9,
+      "title": "Cup and Saucer Creek",
+      "text": "Cup and Saucer Creek, an urban watercourse of the Cooks River catchment, is located in the Canterbury-Bankstown region of Sydney, in New South Wales, Australia.",
+      "is_supporting": false
+    },
+    {
+      "idx": 10,
+      "title": "Little River (Wingecarribee)",
+      "text": "The Little River, a watercourse that is part of the Hawkesbury-Nepean catchment, is located in the Southern Highlands region of New South Wales, Australia.",
+      "is_supporting": false
+    },
+    {
+      "idx": 11,
+      "title": "Beaver Dam High School (Wisconsin)",
+      "text": "Beaver Dam High School is a public high school located in Beaver Dam, Wisconsin. It is a part of the Beaver Dam Unified School District. it had an enrollment of 1,045 students. Its mascot is the Golden Beaver.",
+      "is_supporting": false
+    },
+    {
+      "idx": 12,
+      "title": "Tallebudgera Creek Dam",
+      "text": "The Tallebudgera Creek Dam, or colloquially Tally Dam, is a decommissioned embankment dam across the upper reaches of the Tallebudgera Creek, located in the South East region of Queensland, Australia. The initial purpose of the dam from its establishment until its decommissioning during the 1970s was for the supply of potable water to the Gold Coast region. There is no public access to the dam.",
+      "is_supporting": false
+    },
+    {
+      "idx": 13,
+      "title": "Lostock Dam",
+      "text": "Lostock Dam is a minor rockfill and clay core embankment dam with a concrete lined, flip bucket spillway across the Paterson River upstream of the village of East Gresford in the Hunter region of New South Wales, Australia. The dam's purpose includes flood mitigation, irrigation, water supply and conservation. Mini hydro-power facilities were retrofitted in 2010. The impounded reservoir is also called Lostock Dam.",
+      "is_supporting": true
+    },
+    {
+      "idx": 14,
+      "title": "Cabramatta Creek",
+      "text": "Cabramatta Creek, an urban watercourse of the Georges River catchment, is located in the south-western region of Sydney, in New South Wales, Australia.",
+      "is_supporting": false
+    },
+    {
+      "idx": 15,
+      "title": "Toongabbie Creek",
+      "text": "Toongabbie Creek, an urban watercourse that is part of the Parramatta River catchment, is located in Greater Western Sydney, New South Wales, Australia.",
+      "is_supporting": false
+    },
+    {
+      "idx": 16,
+      "title": "Horse Mesa Dam",
+      "text": "The Horse Mesa Dam is a concrete thin arch dam located in the Superstition Mountains, northeast of Phoenix in Maricopa County, Arizona.",
+      "is_supporting": false
+    },
+    {
+      "idx": 17,
+      "title": "Coxs Creek (Belfield, New South Wales)",
+      "text": "Coxs Creek, a watercourse of the Cooks River catchment, is located in the Inner West of Sydney, in New South Wales, Australia.",
+      "is_supporting": false
+    },
+    {
+      "idx": 18,
+      "title": "Paterson River",
+      "text": "Paterson River, a perennial river that is part of the Hunter River catchment, is located in the Hunter and Mid North Coast regions of New South Wales, Australia.",
+      "is_supporting": true
+    },
+    {
+      "idx": 19,
+      "title": "Darling Mills Creek",
+      "text": "The Darling Mills Creek, an urban watercourse that is part of the Parramatta River catchment, is located in Greater Western Sydney, New South Wales, Australia.",
+      "is_supporting": false
+    }
+  ]
+}
