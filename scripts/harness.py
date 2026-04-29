@@ -729,6 +729,9 @@ def print_metrics_summary(all_runs, m3_by_system, m4_by_system):
 
 def main():
     tasks = load_tasks()
+    resume_mode = "--resume" in sys.argv
+    if resume_mode:
+        sys.argv.remove("--resume")
 
     # Allow running a subset
     systems_to_run = list(SYSTEMS.keys())
@@ -757,6 +760,19 @@ def main():
     print(f"Harness: {len(tasks)} tasks × {len(systems_to_run)} systems = {len(tasks)*len(systems_to_run)} runs")
     sys.stdout.flush()
 
+    # Load existing runs for resume deduplication
+    existing_runs = {}
+    if resume_mode:
+        log_file = f"{OUTPUT_ROOT}/runs.jsonl"
+        if os.path.exists(log_file):
+            with open(log_file) as f:
+                for line in f:
+                    if line.strip():
+                        r = json.loads(line)
+                        existing_runs[(r["task_id"], r["system"])] = r
+            existing_count = len(existing_runs)
+            print(f"RESUME MODE: found {existing_count} existing runs, will skip completed ones")
+
     results = []
     for i, task in enumerate(tasks):
         for j, system_key in enumerate(systems_to_run):
@@ -764,6 +780,15 @@ def main():
             total = len(tasks) * len(systems_to_run)
             print(f"\n[{idx}/{total}] {task['task_id']} | {system_key} | {task['num_hops']}hop")
             sys.stdout.flush()
+
+            # Resume: skip if already exists
+            if resume_mode and (task["task_id"], system_key) in existing_runs:
+                entry = existing_runs[(task["task_id"], system_key)]
+                status = "✅" if entry["success"] else "❌"
+                print(f"  ⏭️  SKIP (already exists) | {status} Answer: '{entry['predicted_answer'][:60]}' | "
+                      f"{entry['token_usage']['total_tokens']} tok")
+                results.append(entry)
+                continue
 
             entry = run_single(task, system_key)
 
