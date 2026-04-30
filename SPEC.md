@@ -1,11 +1,45 @@
 # OpenCode Spawn Pilot — Research Specification
 
-Version: v3.0
-Summary: Controlled experiment comparing single-agent vs forced-multi-agent on MuSiQue multi-hop QA using custom system prompts.
+Version: v4.0
+Summary: Controlled experiment comparing single-agent vs optional-multi-agent on MuSiQue multi-hop QA. Key correction: single mode must NOT mention spawn mechanism at all.
 
 ---
 
-## 0. Key Findings (v3.0)
+## 0. Key Findings (v4.0)
+
+### Critical Design Fix
+
+**v3 Design Flaw**: Single mode prompt said "MUST NOT use task tool" — which itself mentions the spawn mechanism and creates curiosity/confusion.
+
+**v4 Corrected Design**:
+- **single_v2**: System prompt makes NO mention of spawn, task tool, or subagents. Agent only knows about read/grep/bash.
+- **multi_v2**: System prompt mentions task tool as ONE option among read/grep/bash, with model deciding when to use it.
+
+### v4 Results (10 MuSiQue tasks)
+
+| Mode | Accuracy | Spawns | Notes |
+|------|----------|--------|-------|
+| **single_v2** | **7/10 (70%)** | **0** | Pure single-agent, no knowledge of spawn |
+| **multi_v2** | **7/10 (70%)** | **0** | Spawn available but model never chose it |
+
+**Conclusion: When spawn is truly optional and the model is informed about it, the model NEVER spawns on these tasks. Both modes perform identically at 70%.**
+
+### Architecture
+
+OpenCode's default system prompt includes hardcoded spawn instructions. By configuring `~/.config/opencode/opencode.json` with custom `agent.build.prompt`, we override the default and control tool behavior.
+
+```json
+// ~/.config/opencode/opencode.json
+{
+  "agent": {
+    "build": {
+      "prompt": "Your custom system prompt here"
+    }
+  }
+}
+```
+
+**IMPORTANT**: `OPENCODE_CONFIG` environment variable does NOT work. Must modify config file directly.
 
 ### Architecture Breakthrough
 
@@ -42,51 +76,90 @@ Summary: Controlled experiment comparing single-agent vs forced-multi-agent on M
 
 ---
 
-## 1. Experimental Results (v3 — Partial Run)
+## 1. v4.0 Experimental Results
 
-### Single Agent Mode (10 tasks, all completed)
-
-| Task | Correct | Predicted | Spawn | Time |
-|------|---------|-----------|-------|------|
-| 2hop (Lostock Dam) | ✓ | Hunter River | 0 | 14s |
-| 2hop (publisher HQ) | ✓ | Annapolis, Maryland | 0 | 14s |
-| 2hop (Smooth Jazz) | ✓ | George Benson | 0 | 31s |
-| 3hop2 (John Phan) | ✓ | - | 0 | 19s |
-| 3hop2 (date) | ✗ | November 2016 | 0 | 43s |
-| 3hop1 (Warner) | ✗ | James Conkling | 0 | 15s |
-| 4hop3 (largest) | ✗ | 3 | 1 | 37s |
-| 4hop1 (1) | ✓ | - | 0 | 52s |
-| 4hop1 (timeout) | ✗ | - | 0 | 300s |
-| 4hop1 (1) | ✓ | - | 0 | 13s |
-
-**Single: 6/10 正确率 (60%)，0% spawn rate（符合配置预期）**
-
-### Multi Agent Mode (10 tasks, only 3 completed before timeout)
+### Single Agent v2 (10 tasks, 0 spawns)
 
 | Task | Correct | Predicted | Spawn | Time |
 |------|---------|-----------|-------|------|
-| 2hop (Lostock Dam) | ✓ | Hunter River | 0 | 15s |
-| 2hop (publisher HQ) | ✓ | Annapolis | 1 | 17s |
-| 2hop (Smooth Jazz) | ✗ | Dave Koz | 1 | 21s |
-| 3hop2 (John Phan) | ✗ | - | 0 | 42s (killed) |
-| 3hop2 (date) | - | - | - | timeout (240s) |
+| 2hop (Lostock Dam) | ✓ | Hunter River | 0 | 11s |
+| 2hop (publisher HQ) | ✓ | Annapolis, Maryland | 0 | 11s |
+| 2hop (Smooth Jazz) | ✓ | George Benson | 0 | 12s |
+| 3hop1 (Warner owner) | ✗ | James Conkling | 0 | 9s |
+| 3hop2 (John Phan region) | ✓ | South Central Coast | 0 | 12s |
+| 3hop2 (date) | ✓ | January 2015 | 0 | 52s |
+| 4hop1 (Rio Linda) | ✗ | El Salvador | 0 | 131s |
+| 4hop1 (Italian navigator) | ✓ | Sebastian Cabot | 0 | 18s |
+| 4hop1 (MLB season) | ✓ | March 29, 2018 | 0 | 25s |
+| 4hop3 (largest urban area) | ✗ | 3 | 0 | 18s |
 
-**Multi: 2/3 正确率 (67%)，但 timeout 问题严重**
+**Single v2: 7/10 (70%), spawns=0**
+
+### Multi Agent v2 (10 tasks, 0 spawns — model never chose to spawn)
+
+| Task | Correct | Predicted | Spawn | Time |
+|------|---------|-----------|-------|------|
+| 2hop (Lostock Dam) | ✓ | The Hunter River | 0 | 11s |
+| 2hop (publisher HQ) | ✓ | Annapolis, Maryland | 0 | 12s |
+| 2hop (Smooth Jazz) | ✓ | George Benson | 0 | 20s |
+| 3hop1 (Warner owner) | ✓ | Warner Music Group | 0 | 24s |
+| 3hop2 (John Phan region) | ✓ | South Central Coast | 0 | 16s |
+| 3hop2 (date) | ✗ | The documents state... | 0 | 22s |
+| 4hop1 (Rio Linda) | ✗ | Oak Lawn, Illinois | 0 | 218s |
+| 4hop1 (Italian navigator) | ✓ | Sebastian Cabot | 0 | 17s |
+| 4hop1 (MLB season) | ✓ | March 29, 2018 | 0 | 26s |
+| 4hop3 (largest urban area) | ✗ | 3 | 0 | 18s |
+
+**Multi v2: 7/10 (70%), spawns=0**
 
 ### Key Observations
 
-1. **Multi spawns more but isn't faster** — Multi agents time out on 3-hop tasks (240s+), while Single handles 4-hop in 52s max
-2. **Spawn doesn't guarantee correctness** — Multi spawned for Smooth Jazz but answered incorrectly (Dave Koz vs George Benson)
-3. **Single spawns unexpectedly** — Single mode had 1 spawn on 4hop3 despite "MUST NOT" prompt
-4. **2-hop tasks complete in <30s** — 3-hop+ tasks frequently timeout
+1. **Model never spawns when truly optional**: multi_v2 prompt includes task tool description but model chose 0 spawns across all 10 tasks
+2. **Identical accuracy**: Both modes at 70% on same task set
+3. **Same wrong answers**: Both modes fail on identical tasks (3hop1-Warner, 4hop1-RioLinda, 4hop3-largest)
+4. **3hop2-date difference**: Single got it right (January 2015), Multi got it wrong — the only task where accuracy differed
+5. **Spawn doesn't improve**: For these small documents (~60 lines), direct grep is faster and equally effective
 
-### Key Insight
+### Prompt Comparison
 
-**Prompt engineering CAN control spawn behavior when using custom system prompt config**, unlike our previous v2 experiments where OpenCode's default prompt instructions conflicted with our overlay prompts.
+**single_v2** (no mention of spawn):
+```
+You are a research agent answering multi-hop questions by searching through documents.
+
+Your task: Read the provided documents, find the information needed to answer the question, and output your answer.
+
+RULES:
+- Use the read, grep, and bash tools to search through documents
+- Base your answer ONLY on information found in the documents
+- Do not guess or use your own knowledge
+```
+
+**multi_v2** (spawn available as one option):
+```
+You are a research agent answering multi-hop questions by searching through documents.
+
+Your task: Read the provided documents, find the information needed to answer the question, and output your answer.
+
+You have access to a subagent tool that can search documents on your behalf. When you need to find specific information, use the task tool to spawn a subagent.
+
+TOOL USAGE:
+- task(description="<search>", prompt="Read <FILEPATH> and find <INFO>", subagent_type="explore"): Spawns a search subagent
+- read, grep, bash: Standard document search tools
+
+Answer only based on information found in the documents.
+```
 
 ---
 
-## 1. Research Question
+## 2. Research Question
+
+Does the model choose to spawn subagents when given the option? Does spawn improve accuracy on MuSiQue multi-hop QA?
+
+**Answer from v4: Model never spawns on these tasks. Spawn does not improve accuracy.**
+
+---
+
+## 3. Environment
 
 Does explicitly forcing the model to spawn subagents (via system prompt) improve accuracy over single-agent baseline on MuSiQue multi-hop QA?
 
