@@ -7,3 +7,12 @@ __pycache__/
 # Experiment outputs
 outputs/opencode_spawn_pilot/runs/
 outputs/opencode_spawn_pilot/spawn_events/
+
+# Experiment runs (large, excluded)
+outputs/opencode_spawn_pilot/prompt_variants/
+outputs/opencode_spawn_pilot/prompt_variants_v2/v1_forced*/
+outputs/opencode_spawn_pilot/prompt_variants_v2/v2_task*/
+outputs/opencode_spawn_pilot/prompt_variants_v2/v3_task*/
+outputs/opencode_spawn_pilot/prompt_variants_v2/v4_baseline*/
+outputs/opencode_spawn_pilot/runs/
+data/stage0b_smoke/
