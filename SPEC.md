@@ -1,7 +1,7 @@
 # OpenCode Spawn Pilot — Research Specification
 
-Version: v5.0
-Summary: Expanded task set to 3 tiers (short/medium/large) with 22 total tasks. Model never spawns subagents regardless of document size or task complexity when spawn is truly optional. Single and multi modes perform comparably.
+Version: v6.0
+Summary: Force-spawn experiment shows model CAN spawn when forced via system prompt, achieving 64% accuracy (vs 42% single). 6/11 tasks spawned subagents when forced. Key finding: spawn helps on some tasks but doesn't guarantee success on complex chain-reasoning tasks.
 
 ---
 
@@ -344,6 +344,13 @@ This suggests forced-multi-agent may have accuracy advantage on complex tasks.
 - Single-agent: 14/20 (70%), Multi-agent: 14/22 (64%) — no accuracy advantage for spawn
 - Medium tier (HotpotQA): single 6/6 (100%), multi 4/6 (67%) — single actually outperforms multi
 - Large tier: multi 4/6 (67%) vs single 3/6 (50%) — slight multi advantage but spawn count = 0
+
+### v6.0 (2026-05-01)
+- Force-spawn experiment: system prompt MUST use task tool, no read/grep for search
+- Single: 5/12 (42%), 0 spawns — clean baseline
+- Force multi: 7/11 (64%), 7 spawns across 6/11 tasks — model CAN spawn when forced
+- Key insight: spawn helps on some tasks (3 cases where force_multi correct but single incorrect) but complex chain-reasoning tasks (3hop, 4hop) still fail regardless
+- Task 11 (4hop) and Task 12 (4hop) timed out in force_multi mode — spawn adds overhead
 
 ### v4.0 (2026-04-30)
 - Discovered config file approach to override default system prompt
