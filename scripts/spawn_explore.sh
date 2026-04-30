@@ -35,7 +35,9 @@ STDERR_F=$(mktemp)
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EXIT_CODE=0
 
-opencode run \
+OPENCODE_BIN="/home/jinxu/.opencode/bin/opencode"
+
+$OPENCODE_BIN run \
     --agent explore \
     --dir "$WORKDIR" \
     --format json \
