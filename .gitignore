@@ -3,3 +3,7 @@ swebench_repo/
 __pycache__/
 .pytest_cache/
 *.pyc
+
+# Experiment outputs
+outputs/opencode_spawn_pilot/runs/
+outputs/opencode_spawn_pilot/spawn_events/

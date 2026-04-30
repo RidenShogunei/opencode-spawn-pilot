@@ -1,29 +1,41 @@
 # OpenCode Spawn Pilot — Research Specification
 
-版本：v0.6
-上一版本：v0.5
-变更类型：研究目标与架构完全重构
-主题：用 Qwen3.5-9B + vLLM + OpenCode 在 MuSiQue multi-hop QA 上，对比 agent 在 spawn 关闭 vs 打开时的行为差异。
+版本：v0.7
+上一版本：v0.6
+变更类型：实验设计完全重构（检测机制失效 → 新 M0/M1/M2 activation probe）
 
 ---
 
-## 0. 核心研究问题
+## 0. 核心发现（v0.6 实验）
 
-**在成熟 agent 架构下，subagent spawn 能力在不同长度任务上是否以及如何影响 agent 表现？**
+**Prompt-level spawn affordance did not induce actual subagent calls.**
 
-具体而言：
+上一轮实验（spawn_closed vs spawn_open，20 runs）的 `spawn_open` 模式中：
 
-- 2-hop（简单）：agent 自己能覆盖，spawn 是否多余？
-- 3-hop（中等）：spawn 能否帮助覆盖额外 hop？
-- 4-hop（复杂）：spawn 是否成为必要能力？
+- regex 检测到 6/10 "spawn_attempted"
+- **事后确认全部为误报**：
+  - `cli` 模式：regex 匹配到了 prompt 提示文本本身（模型 Echo 了提示，不是真的调用）
+  - `direct` 模式：regex 匹配到了路径字符串（`spawn-pilot/.../documents.txt`）或 JSON 字段（`callID`）
+- **真实调用：0/10**
 
-这是一个探索性研究，不是对照假设验证。没有"成功"或"失败"——只有观察到的行为模式。
+这说明 Qwen3.5-9B 在文本 affordance 下不会将"你知道可以 spawn"转化为可执行动作。
 
 ---
 
-## 1. 环境配置
+## 1. 研究问题（新）
 
-### 1.1 vLLM / 模型配置
+**Qwen3.5-9B 是不会主动 spawn，还是不会把文本 affordance 转化为可执行动作？**
+
+具体分层：
+- M0（spawn_closed）：作为能力 baseline——模型单独能达到的准确率
+- M1（spawn_affordance）：给文本 affordance，但不强制——模型会主动 spawn 吗？
+- M2（spawn_decision_required）：强制模型先做 SPAWN_DECISION yes/no，再执行——这能否解锁 spawn 行为？
+
+---
+
+## 2. 环境配置
+
+### 2.1 vLLM / 模型
 
 ```yaml
 engine: vLLM 0.19.1
@@ -36,7 +48,7 @@ thinking: off
 max_model_len: 65536
 ```
 
-### 1.2 OpenCode 配置
+### 2.2 OpenCode
 
 ```yaml
 framework: OpenCode 1.3.6
@@ -46,191 +58,177 @@ model: qwen35-9b
 mode: foreground only
 ```
 
-OpenCode 已配置 agents：build (primary), explore (subagent), general (subagent), plan, summary, title, compaction。
-
-### 1.3 Token 限制
-
-```yaml
-max_tokens: 8192  # per request cap
-```
-
----
-
-## 2. 任务域
-
-### 2.1 Benchmark
-
-```yaml
-benchmark: MuSiQue
-format: multi-hop QA
-context: 20-paragraph document pool per question
-supporting_evidence: 2–4 support paragraphs per question
-answer_type: short answer
-```
-
-### 2.2 任务分层
-
-| Bucket           | MuSiQue hop | 任务数 | 含义                       |
-| ---------------- | ----------: | --: | ------------------------ |
-| `local_readable` |       2-hop |   3 | 2 段支持，Build-only 有机会直接覆盖 |
-| `multi_file`     |       3-hop |   3 | 3 段跨文档追踪                 |
-| `long_context`   |       4-hop |   4 | 4 段支持藏在 20 段文档中          |
-
-总计：10 任务。
-
----
-
-## 3. 两种模式设计
-
-### 3.1 Mode A: spawn_closed
-
-```text
-Build agent 单独运行
-subagent 系统：关闭（配置层面）
-Build 对 subagent 的存在：完全不知道
-```
-
-实现方式：
-
-- OpenCode 运行 `opencode run --agent build`
-- Build 的 prompt 不包含任何关于 subagent 的提示
-- 即使 Build 尝试调用 explore 命令，subagent 配置也是禁用的（Mode B 中启用）
-
-### 3.2 Mode B: spawn_open
-
-```text
-Build agent 单独运行（但可以自行决定 spawn）
-subagent 系统：开启
-Build 对 subagent 的存在：知道如何使用
-```
-
-实现方式：
-
-- OpenCode 运行 `opencode run --agent build`
-- Build 的 prompt 包含一个如何调用 explore subagent 的示例
-- Build 自己决定何时使用 spawn
-
-Spawn 提示（Mode B Build prompt 中）：
-
-```
-If you want to delegate document exploration to a subagent, you can call:
-   opencode run --agent explore --dir <workdir> -- <your exploration task>
-   The explore subagent will search documents and return findings.
-```
-
-Build 会在处理任务时自己判断：
-
-- 2-hop → 大概率不 spawn，直接答
-- 3-hop → 有时 spawn，有时不
-- 4-hop → 很可能 spawn
-
----
-
-## 4. 关键观察点
-
-### 4.1 每次 Run 记录
-
-每个 run 必须记录：
-
-- `spawn_attempted`: boolean — Build 是否尝试了 spawn
-- `spawn_method`: "cli" | "direct" | None — 如何检测到 spawn 尝试
-- `success`: boolean — 最终答案是否正确
-- `token_usage`: input / output / total tokens
-- `runtime_sec`: wall-clock time
-- `steps`: agent 步数
-
-### 4.2 日志调试
-
-日志输出到 `runs/{run_id}/stdout_build.txt`。
-
-检测 spawn 尝试的方式：
-
-- **CLI 模式**：在 stdout 中搜索 `opencode run --agent explore` 字符串
-- **直接提及**：搜索 "spawn explore" / "call explore" 等模式
-
-### 4.3 事后全盘阅读
-
-所有过程结果（stdout 文件）都会被保存。研究者（你）会在实验后进行全量阅读，理解 agent 在两种模式下的行为差异。
-
----
-
-## 5. 实验规模
-
-```
-10 tasks × 2 modes = 20 runs
-```
-
-每题都在两种模式下跑。没有 seed 扩展（当前阶段不需要统计显著性）。
-
----
-
-## 6. 不做的事
-
-- 不在 harness 层强制调用 Explore subagent
-- 不做 4 系统（S1/S2/S3/S4）对照
-- 不计算 M1-M5 机制指标（这些是 Stage 1 的遗留指标）
-- 不定义"成功"或"失败"——只有观察结果
-
----
-
-## 7. 期望的观察结果类型
-
-### 7.1 行为层面
-
-- Mode B 中，agent spawn 的频率和时机是什么？
-- 在 2/3/4-hop 上，spawn 决策有何不同？
-- spawn 后，Build 是否真的整合了 subagent 的输出？
-
-### 7.2 性能层面
-
-- Mode B 的准确率 vs Mode A 在各 hop 层级
-- spawn 是否带来 token 成本上升？
-- spawn 带来的收益是否值得其成本？
-
-### 7.3 失败模式
-
-- Build spawn 了但答案仍错 → 失败发生在哪个环节？
-- Build 没 spawn 但答对了 → 是判断正确还是蒙对？
-- Build spawn 了但没用结果 → integration 问题？
-
----
-
-## 8. OpenCode-native Spawn 架构说明
-
-当前实现使用 `opencode run --agent build`，Build agent 内部自己决定是否调用 `opencode run --agent explore`。这比 harness 强制调度更接近 OpenCode-native 的 spawn 理念。
-
-两种实现路径：
-
-| 路径 | 说明 |
-| ---- | ---- |
-| Harness 强制调度 | harness.py 控制调用顺序，完全可控但非 native |
-| OpenCode-native spawn | Build 自己决定何时 spawn，实验更真实但不可控 |
-
-当前选择后者，因为研究目标是 agent 自己决定 spawn 的行为，不是强制 spawn 的效果。
-
----
-
-## 9. 运行环境
+### 2.3 Wrapper Script
 
 ```bash
-# 启动 vLLM
+scripts/spawn_explore.sh  # 每次真实调用写 spawn_events.jsonl
+```
+
+**Spawn 地面真值来自 wrapper 日志，不是 stdout regex。**
+
+---
+
+## 3. 任务域
+
+同 v0.6：MuSiQue 10 题（2-hop × 3，3-hop × 3，4-hop × 4）。
+
+---
+
+## 4. 三种模式设计
+
+### M0 — spawn_closed（Baseline）
+
+```
+Build agent 单独运行
+subagent 能力：完全不知道
+目的：测量无 spawn 能力下的准确率 baseline
+```
+
+### M1 — spawn_affordance（Probe 1）
+
+```
+Build agent 知道它可以通过 wrapper script 调用 explore subagent
+但不是必须——它自己决定是否 spawn
+```
+
+Prompt 片段：
+```
+If you want to delegate document exploration to a subagent, you can call:
+   bash /home/jinxu/opencode-spawn-pilot/scripts/spawn_explore.sh <task_id> <run_id> <workdir> <your exploration task>
+   The explore subagent will search documents and return findings.
+Decide for yourself whether to use the subagent or handle everything directly.
+```
+
+### M2 — spawn_decision_required（Probe 2）
+
+```
+Build agent 必须在做任何事情之前输出：
+   SPAWN_DECISION: yes
+   或
+   SPAWN_DECISION: no
+
+如果 yes：必须立即调用 wrapper script
+如果 no：自己用 grep/read 完成
+```
+
+Prompt 片段：
+```
+Before doing anything else, you must decide whether to delegate document
+exploration to a subagent.
+
+Output exactly ONE of the following on its own line:
+   SPAWN_DECISION: yes
+   SPAWN_DECISION: no
+
+If you choose yes, you MUST call the wrapper script immediately:
+   bash /home/jinxu/opencode-spawn-pilot/scripts/spawn_explore.sh ...
+
+You must output a SPAWN_DECISION line first, then act accordingly.
+```
+
+---
+
+## 5. 关键机制
+
+### 5.1 Wrapper Script（spawn_explore.sh）
+
+- Build 每次真实调用 explore subagent 必须通过此 wrapper
+- Wrapper 每次调用写入 `outputs/opencode_spawn_pilot/spawn_events/spawn_events.jsonl`
+- 记录：timestamp, task_id, run_id, workdir, exploration_task, exit_code, child_stdout_preview, child_stderr_preview
+- Wrapper 的 stdout（即 subagent 的输出）会返回给 Build 进程
+
+### 5.2 Spawn 地面真值
+
+**禁止用 stdout regex 作为 spawn 真值。**
+
+Spawn count = `spawn_events.jsonl` 中对应 run_id 的记录数。
+
+### 5.3 Echo 检测
+
+检测模型是否把 spawn 提示文本 Echo 出来（而不是执行）：
+
+```python
+if "opencode run --agent explore" in text and "Decide for yourself" in text:
+    → echoed_instructions = True
+```
+
+---
+
+## 6. 报告指标
+
+| 指标 | 定义 |
+|------|------|
+| `spawn_decision_yes_rate` | M2 中 SPAWN_DECISION: yes 的比例 |
+| `valid_spawn_call_rate` | 有 SPAWN_DECISION=yes 且 actual_spawn_count ≥ 1 的比例 |
+| `decision_call_consistency` | M2 中 decision 和实际调用一致的比例（yes→spawned 或 no→not spawned） |
+| `spawn_call_rate_by_hop` | 各 hop 层级 actual_spawn_count ≥ 1 的比例 |
+| `accuracy_by_mode` | 各模式准确率 |
+| `invalid_spawn_attempts` | M2 中说了 yes 但没调用 wrapper 的次数 |
+| `echoed_instructions` | 模型把 spawn 提示文本 Echo 出来但没执行的次数 |
+
+---
+
+## 7. 实验规模
+
+```
+10 tasks × 3 modes = 30 runs
+```
+
+不做 seed 扩展（当前阶段不需要统计显著性）。
+
+---
+
+## 8. 运行方式
+
+```bash
+# 启动 vLLM（如未运行）
 bash /home/jinxu/opencode-spawn-pilot/scripts/start_vllm.sh
 
-# 运行实验（全部）
+# 运行全部 30 runs
 python3 /home/jinxu/opencode-spawn-pilot/scripts/harness.py
 
-# 运行实验（仅测试）
+# 仅 M0
+python3 /home/jinxu/opencode-spawn-pilot/scripts/harness.py m0
+
+# 仅 M1
+python3 /home/jinxu/opencode-spawn-pilot/scripts/harness.py m1
+
+# 仅 M2
+python3 /home/jinxu/opencode-spawn-pilot/scripts/harness.py m2
+
+# 仅测试（1题）
 python3 /home/jinxu/opencode-spawn-pilot/scripts/harness.py test
-
-# 仅 spawn_closed
-python3 /home/jinxu/opencode-spawn-pilot/scripts/harness.py closed
-
-# 仅 spawn_open
-python3 /home/jinxu/opencode-spawn-pilot/scripts/harness.py open
-
-# 仅 2-hop
-python3 /home/jinxu/opencode-spawn-pilot/scripts/harness.py 2hop
 
 # 断点续跑
 python3 /home/jinxu/opencode-spawn-pilot/scripts/harness.py --resume
 ```
+
+---
+
+## 9. 不做的事
+
+- 不在 harness 层强制调用 Explore subagent
+- 不用 stdout regex 作为 spawn 真值
+- 不在 M1/M2 中预热 spawn（即不让模型提前练习 spawn）
+- 不扩展 seed（单次运行）
+
+---
+
+## 10. 期望的观察结果类型
+
+### 10.1 M1 vs M0 对比
+
+- 如果 M1  spawn 率 ≈ 0 → 模型不会主动 spawn（affordance 不够）
+- 如果 M1  spawn 率 > 0，但准确率没提升 → spawn 了但没整合
+- 如果 M1  spawn 率 > 0 且准确率提升 → affordance 有效
+
+### 10.2 M2 vs M1 对比
+
+- 如果 M2 spawn 率 > M1 → 强制决策解锁了 spawn 行为
+- 如果 M2 spawn 率 = M1 → 决策本身不是瓶颈
+- 如果 M2 invalid_attempts > 0 → 模型说了 yes 但没调用 wrapper
+
+### 10.3 Echo 分析
+
+- M1 中 echoed_instructions > 0 → 模型把提示当成了系统指令而非行动指令
+- M2 中 echoed_instructions = 0 → 强制决策格式减少了 Echo
