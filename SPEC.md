@@ -30,12 +30,14 @@ Even with explicit hint about `task` tool, model uses `bash`+`grep` instead of s
 
 ### spawn_events mechanism
 
-When build agent calls `task` tool:
+When build agent calls `task` tool with valid `agent` parameter:
 ```
 tool: task
-input: {description, prompt, subagent_type: "explore"}
+input: {description, prompt, agent: "explore" | "general"}
 ```
-OpenCode internally spawns an explore subagent. The task result is returned as tool output.
+OpenCode internally spawns the specified subagent. The task result is returned as tool output.
+
+**Note**: OpenCode task tool schema uses `agent` field (string), not `subagent_type`.
 
 ---
 
@@ -100,7 +102,7 @@ to spawn an 'explore' subagent to search in parallel.
 
 Task tool format:
   tool: task
-  input: {description, prompt, subagent_type: "explore"}
+  input: {description, prompt, agent: "explore"}
 ```
 
 ---
@@ -133,23 +135,32 @@ python3 scripts/run_opencode.py --mode with-subagent --limit 1
 
 ## 7. Results (v1.0)
 
-### Overall
-- no-subagent: **6/10 = 60%** (0 spawns)
-- with-subagent: **6/10 = 60%** (0 spawns)
+### ⚠️ Corrected Conclusion
 
-### By hop count
+**v1.0 used an unavailable task target (`agent="explore"` in prompts but `subagent_type` was the parameter the model attempted to use with undefined value), so it cannot conclusively measure voluntary task-tool spawning.**
+
+All spawn attempts failed due to parameter mismatch:
+- Prompt examples told model to use: `agent="explore"` / `agent="general"`
+- Model actually called with: `subagent_type=undefined` (value missing/empty)
+- OpenCode task tool schema expects: `agent` field, not `subagent_type`
+
+### Overall (original, invalidated)
+- no-subagent: **6/10 = 60%** (0 confirmed successful spawns)
+- with-subagent: **6/10 = 60%** (0 confirmed successful spawns)
+
+### By hop count (original)
 | Hop | no-subagent | with-subagent |
 |-----|-------------|---------------|
 | 2-hop | 3/3 ✓ | 3/3 ✓ |
 | 3-hop | 1/3 | 1/3 |
 | 4-hop | 2/4 | 2/4 |
 
-### Key observations
+### What actually happened
 
-1. **Model never uses task tool** — despite having it and being explicitly told about it
-2. **Model prefers direct bash/grep** — uses bash to run grep commands directly
-3. **No accuracy difference** — spawn affordance didn't help or hurt
-4. **3-hop hardest** — both modes fail on same 3-hop questions
+1. **Model DID attempt to use task tool** — not "never uses"
+2. **Parameter name mismatch**: prompts used `agent=` but model called with `subagent_type=undefined`
+3. **All spawns failed silently** — errors were buried in tool-call rejection, not visible as "spawn failed"
+4. **3-hop hardest** — accuracy gap between modes was artificial (same failures, not same successes)
 
 ---
 
