@@ -69,29 +69,47 @@ def prepare_workdir(run_id, task):
     return workdir, task_data
 
 
-def run_opencode(workdir, prompt, agent="build", timeout=600, log_suffix=""):
-    """Run OpenCode. stdout/stderr written to files, returned as content."""
+def run_opencode(workdir, prompt, agent="build", timeout=120, log_suffix=""):
+    """Run OpenCode. stdout/stderr written to files, returned as content.
+
+    Fix: stdin=DEVNULL prevents any stdin inheritance issues.
+    JSON events appear in stdout with --format json.
+    Use absolute paths for --dir to avoid cwd resolution issues.
+    """
     suffix = f"_{log_suffix}" if log_suffix else ""
     stdout_file = f"{workdir}/stdout{suffix}.txt"
     stderr_file = f"{workdir}/stderr{suffix}.txt"
 
+    # Use absolute path for --dir to avoid relative path resolution issues
+    workdir_abs = os.path.abspath(workdir)
     cmd = [
         OPENCODE_BIN, "run",
         "--agent", agent,
-        "--dir", workdir,
+        "--dir", workdir_abs,
         "--format", "json",
         "--print-logs",
         prompt
     ]
 
     start = time.time()
-    with open(stdout_file, "w", buffering=1) as stdout_f, \
-         open(stderr_file, "w", buffering=1) as stderr_f:
+    # stderr to file (real-time log), stdin=DEVNULL avoids inheritance issues
+    with open(stderr_file, "w", buffering=1) as stderr_f:
         proc = subprocess.Popen(
-            cmd, stdout=stdout_f, stderr=stderr_f,
-            text=True, cwd=workdir, bufsize=1
+            cmd,
+            stdin=subprocess.DEVNULL,  # prompt is positional arg, not stdin
+            stdout=subprocess.PIPE,
+            stderr=stderr_f,
+            text=True,
+            cwd=workdir_abs,
+            bufsize=1,  # line buffering for stdout pipe
         )
+        # Read stdout incrementally to avoid pipe deadlock
+        stdout_chunks = []
         try:
+            # Read stdout line by line as it arrives
+            for line in iter(proc.stdout.readline, ''):
+                if line:
+                    stdout_chunks.append(line)
             exit_code = proc.wait(timeout=timeout)
             timeout_flag = False
         except subprocess.TimeoutExpired:
@@ -99,10 +117,16 @@ def run_opencode(workdir, prompt, agent="build", timeout=600, log_suffix=""):
             proc.wait()
             exit_code = proc.returncode
             timeout_flag = True
+        finally:
+            proc.stdout.close()
+        stdout = "".join(stdout_chunks)
+
     elapsed = time.time() - start
 
-    with open(stdout_file) as f:
-        stdout = f.read()
+    # Write stdout to file for debugging
+    with open(stdout_file, "w") as f:
+        f.write(stdout)
+    # Read stderr for combined analysis
     with open(stderr_file) as f:
         stderr = f.read()
 
@@ -133,7 +157,11 @@ def extract_text_output(stdout):
 
 
 def extract_answer(stdout, stderr):
-    """Extract final answer from OpenCode output."""
+    """Extract final answer from OpenCode output.
+    
+    With --format json --print-logs, JSON events go to stdout
+    while INFO logs go to stderr, so we search both.
+    """
     combined = (stdout or "") + "\n" + (stderr or "")
     for line in combined.split('\n'):
         line = line.strip()
@@ -222,7 +250,10 @@ def evaluate(answer, gold_answer, aliases):
 
 
 def parse_metrics(stdout):
-    """Parse token usage from stdout JSON logs."""
+    """Parse token usage from stdout JSON logs.
+
+    With --format json --print-logs, JSON events may be in stdout.
+    """
     tokens = {"input": 0, "output": 0, "total": 0}
     steps = 0
 
