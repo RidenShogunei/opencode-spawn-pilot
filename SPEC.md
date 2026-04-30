@@ -1,11 +1,11 @@
 # OpenCode Spawn Pilot — Research Specification
 
-Version: v4.0
-Summary: Controlled experiment comparing single-agent vs optional-multi-agent on MuSiQue multi-hop QA. Key correction: single mode must NOT mention spawn mechanism at all.
+Version: v5.0
+Summary: Expanded task set to 3 tiers (short/medium/large) with 22 total tasks. Model never spawns subagents regardless of document size or task complexity when spawn is truly optional. Single and multi modes perform comparably.
 
 ---
 
-## 0. Key Findings (v4.0)
+## 0. Key Findings (v5.0)
 
 ### Critical Design Fix
 
@@ -15,14 +15,20 @@ Summary: Controlled experiment comparing single-agent vs optional-multi-agent on
 - **single_v2**: System prompt makes NO mention of spawn, task tool, or subagents. Agent only knows about read/grep/bash.
 - **multi_v2**: System prompt mentions task tool as ONE option among read/grep/bash, with model deciding when to use it.
 
-### v4 Results (10 MuSiQue tasks)
+### v5.0 Results (22 tasks across 3 tiers, 0 spawns)
 
-| Mode | Accuracy | Spawns | Notes |
-|------|----------|--------|-------|
-| **single_v2** | **7/10 (70%)** | **0** | Pure single-agent, no knowledge of spawn |
-| **multi_v2** | **7/10 (70%)** | **0** | Spawn available but model never chose it |
+| Tier | Mode | Accuracy | Spawn |
+|------|------|----------|-------|
+| short (~20 para) | single | 5/8 (63%) | 0 |
+| short (~20 para) | multi | 6/10 (60%) | 0 |
+| med (10 para, 14-16K chars) | single | 6/6 (100%) | 0 |
+| med (10 para, 14-16K chars) | multi | 4/6 (67%) | 0 |
+| large (100 para, 43-49K chars) | single | 3/6 (50%) | 0 |
+| large (100 para, 43-49K chars) | multi | 4/6 (67%) | 0 |
 
-**Conclusion: When spawn is truly optional and the model is informed about it, the model NEVER spawns on these tasks. Both modes perform identically at 70%.**
+**Overall: Single 14/20 (70%), Multi 14/22 (64%)**
+
+**Critical finding: Model NEVER spawns when spawn is truly optional — across all 22 tasks, all 3 tiers, and all complexity levels. This holds even for large documents (100 paragraphs) where parallel search could help.**
 
 ### Architecture
 
@@ -155,7 +161,7 @@ Answer only based on information found in the documents.
 
 Does the model choose to spawn subagents when given the option? Does spawn improve accuracy on MuSiQue multi-hop QA?
 
-**Answer from v4: Model never spawns on these tasks. Spawn does not improve accuracy.**
+**Answer from v5.0**: Model never spawns on any of the 22 tasks across 3 tiers. Single-agent performs marginally better (70% vs 64%). Spawn is never perceived as beneficial by the model even on large documents (100 paragraphs, 43-49K chars).
 
 ---
 
@@ -332,7 +338,14 @@ This suggests forced-multi-agent may have accuracy advantage on complex tasks.
 
 ## 12. Change Log
 
-### v3.0 (2026-04-30)
+### v5.0 (2026-05-01)
+- Expanded task set from 10 to 22 tasks across 3 tiers: short (MuSiQue original, ~20 para), medium (HotpotQA, 10 para, 14-16K chars), large (MuSiQue expanded, 100 para, 43-49K chars)
+- Model NEVER spawns subagents across all 22 tasks — even on 100-paragraph documents where parallel search could theoretically help
+- Single-agent: 14/20 (70%), Multi-agent: 14/22 (64%) — no accuracy advantage for spawn
+- Medium tier (HotpotQA): single 6/6 (100%), multi 4/6 (67%) — single actually outperforms multi
+- Large tier: multi 4/6 (67%) vs single 3/6 (50%) — slight multi advantage but spawn count = 0
+
+### v4.0 (2026-04-30)
 - Discovered config file approach to override default system prompt
 - Proved single/multi configurations work correctly
 - `OPENCODE_CONFIG` env var does NOT work — must modify config directly
