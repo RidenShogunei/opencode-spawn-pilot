@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Stage 1B Harness: Multi-hop QA with OpenCode + vLLM
-Mechanism Confirmation — 4 systems, 5 diagnostic metrics (M1-M5).
-v3: Added S4 (structured evidence table), M1-M5 metric computation."""
+"""
+New Architecture Harness: spawn_closed vs spawn_open comparison
+In spawn_closed: Build agent runs alone, subagent system is non-functional.
+In spawn_open: Build agent knows it CAN call 'opencode run --agent explore' when it wants.
+Both modes run only ONE OpenCode invocation per task — no forced subagent chain.
+"""
 
 import json
 import os
@@ -17,119 +20,16 @@ TASKS_FILE = f"{OUTPUT_ROOT}/tasks.jsonl"
 TASK_DATA_DIR = f"{OUTPUT_ROOT}/task_data"
 OPENCODE_BIN = "/home/jinxu/.opencode/bin/opencode"
 
-SYSTEMS = {
-    "build_only": {
-        "use_explore": False,
-        "use_general": False,
-        "use_table": False,
+MODES = {
+    "spawn_closed": {
+        "description": "Build-only. Agent has no knowledge of subagent capability.",
+        "can_spawn": False,
     },
-    "build_explore": {
-        "use_explore": True,
-        "use_general": False,
-        "use_table": False,
-    },
-    "build_explore_general": {
-        "use_explore": True,
-        "use_general": True,
-        "use_table": False,
-    },
-    "build_explore_table": {
-        "use_explore": True,
-        "use_general": False,
-        "use_table": True,
+    "spawn_open": {
+        "description": "Build agent CAN call explore subagent when it decides to.",
+        "can_spawn": True,
     },
 }
-
-EXPLORE_PROMPT = """You are an Explore subagent. Your job is to find relevant information in documents.txt.
-
-QUESTION TO ANSWER: {question}
-NUM HOPS: {num_hops}
-
-INSTRUCTIONS:
-1. Use grep to search documents.txt for relevant keywords
-2. Use read to read specific paragraphs
-3. Report ALL relevant paragraphs with their IDs and key facts
-4. Trace the chain of facts across paragraphs ({num_hops}-hop question)
-5. End with: FINDINGS_COMPLETE
-
-Begin now."""
-
-GENERAL_PROMPT = """You are a General verification subagent. Review the Explore subagent's findings.
-
-ORIGINAL QUESTION: {question}
-
-EXPLORE_FINDINGS:
-{explore_output}
-
-INSTRUCTIONS:
-1. Check if any relevant paragraphs were missed
-2. Verify the logical chain across paragraphs
-3. Identify any gaps or contradictions
-4. Propose additional searches if needed
-5. End with: REVIEW_COMPLETE
-
-Begin now."""
-
-# S4: Structured evidence table generation
-TABLE_PROMPT = """You are a Table generation subagent. Convert the Explore findings into a structured evidence table.
-
-ORIGINAL QUESTION: {question}
-NUM HOPS: {num_hops}
-
-EXPLORE FINDINGS:
-{explore_output}
-
-INSTRUCTIONS:
-1. Review the Explore findings above
-2. Create a markdown table with these columns:
-   | Paragraph ID | Key Fact | Connects To |
-3. Each row = one supporting paragraph used in the chain
-4. "Connects To" column: describe which hop this paragraph contributes to
-5. Mark the final ANSWER row with "→ ANSWER"
-6. End your response with: TABLE_COMPLETE
-
-Example format:
-| Para ID | Key Fact | Connects To |
-|---------|----------|-------------|
-| 7 | Phu Luang is in Vietnam | hop 1 |
-| 12 | John Phan birthplace = Vietnam | hop 2 → ANSWER |
-
-Begin now."""
-
-# S1 standalone prompt (no subagent context)
-S1_PROMPT = """TASK: Answer a multi-hop question by searching and reading documents.
-
-QUESTION: {question}
-
-RESOURCES:
-- documents.txt: {num_paragraphs} Wikipedia-style paragraphs. Each starts with "--- PARAGRAPH N ---".
-
-PROCESS:
-1. Use `grep` to search for keywords in documents.txt
-2. Use `read` to read documents.txt to find specific paragraphs
-3. Chain information across paragraphs ({num_hops}-hop question)
-4. When ready, output exactly on its own line: ANSWER: <your answer>
-
-IMPORTANT: Do NOT use any subagents (no Explore, no General, no Task). Complete this task yourself using only direct tool calls (grep, read).
-
-Begin now."""
-
-# S2/S3/S4 build prompt (receives subagent context)
-BUILD_PROMPT = """TASK: Answer a multi-hop question using findings from subagents.
-
-QUESTION: {question}
-
-{subagent_context}
-
-INSTRUCTIONS:
-1. Read the subagent findings above carefully
-2. If needed, verify by reading specific paragraphs from documents.txt
-3. Chain the information across paragraphs ({num_hops}-hop question)
-4. When ready, output exactly on its own line: ANSWER: <your answer>
-
-IMPORTANT: Do NOT call any subagents. Use only direct tool calls (grep, read).
-
-Begin now."""
 
 
 def load_tasks():
@@ -169,8 +69,8 @@ def prepare_workdir(run_id, task):
     return workdir, task_data
 
 
-def run_opencode(workdir, prompt, agent="build", timeout=300, log_suffix=""):
-    """Run OpenCode with specified agent. stdout/stderr written to files, returned as content."""
+def run_opencode(workdir, prompt, agent="build", timeout=600, log_suffix=""):
+    """Run OpenCode. stdout/stderr written to files, returned as content."""
     suffix = f"_{log_suffix}" if log_suffix else ""
     stdout_file = f"{workdir}/stdout{suffix}.txt"
     stderr_file = f"{workdir}/stderr{suffix}.txt"
@@ -206,9 +106,13 @@ def run_opencode(workdir, prompt, agent="build", timeout=300, log_suffix=""):
     with open(stderr_file) as f:
         stderr = f.read()
 
-    return {"stdout": stdout, "stderr": stderr,
-            "exit_code": exit_code, "runtime_sec": elapsed,
-            "timeout": timeout_flag}
+    return {
+        "stdout": stdout, "stderr": stderr,
+        "exit_code": exit_code, "runtime_sec": elapsed,
+        "timeout": timeout_flag,
+        "stdout_file": stdout_file,
+        "stderr_file": stderr_file,
+    }
 
 
 def extract_text_output(stdout):
@@ -277,8 +181,10 @@ def evaluate(answer, gold_answer, aliases):
             return True, "alias_match"
 
     # Numeric/ordinal matching
-    ordinal_map = {"1": "first", "2": "second", "3": "third", "4": "fourth", "5": "fifth",
-                   "1st": "first", "2nd": "second", "3rd": "third", "4th": "fourth", "5th": "fifth"}
+    ordinal_map = {
+        "1": "first", "2": "second", "3": "third", "4": "fourth", "5": "fifth",
+        "1st": "first", "2nd": "second", "3rd": "third", "4th": "fourth", "5th": "fifth"
+    }
     ans_nums = re.findall(r'\d+', answer_clean)
     gold_nums = re.findall(r'\d+', gold_clean)
     if ans_nums == gold_nums and ans_nums:
@@ -339,265 +245,119 @@ def parse_metrics(stdout):
     return tokens, steps
 
 
-# ------------------------------------------------------------------
-# M1-M5 Metric Computation
-# ------------------------------------------------------------------
-
-def compute_m1_evidence_recall(explore_text, task_data):
-    """M1: fraction of gold supporting paragraphs mentioned in Explore output."""
-    # Derive gold supporting paragraphs from is_supporting flag on each paragraph
-    gold_paras = set()
-    for para in task_data.get("paragraphs", []):
-        if para.get("is_supporting", False):
-            gold_paras.add(para["idx"])
-    if not gold_paras:
-        return 0.0, []
-
-    found = []
-    for para_idx in gold_paras:
-        # Check if this paragraph ID is mentioned in explore output
-        # Patterns: "paragraph 7", "para 7", "7", "[7]", "PARAGRAPH 7"
-        para_str = str(para_idx)
-        patterns = [
-            rf'\bpara(?:graph)?\s*{re.escape(para_str)}\b',
-            rf'\bPARA(?:GRAPH)?\s*{re.escape(para_str)}\b',
-            rf'\[?\b{re.escape(para_str)}\b\]?',
-        ]
-        for pat in patterns:
-            if re.search(pat, explore_text, re.IGNORECASE):
-                found.append(para_idx)
-                break
-
-    recall = len(found) / len(gold_paras)
-    return recall, found
-
-
-def compute_m2_missing_hop_coverage(run_entry, task_data, all_runs_for_task):
-    """M2: how many additional hops does this system cover vs S1 baseline.
-    Returns list of gold supporting paragraph IDs covered by subagent that S1 missed.
+def detect_spawn_attempt(stdout):
+    """Detect if Build agent attempted to spawn explore subagent.
+    Returns (attempted, method) where method is 'cli' or 'direct' or None.
     """
-    gold_paras = set(task_data.get("post_hoc_features", {}).get("supporting_paragraph_indices", []))
-    if not gold_paras:
-        return []
+    stdout_lower = (stdout or "").lower()
 
-    # Find S1 run for this task to know what S1 already covered
-    s1_run = next(
-        (r for r in all_runs_for_task if r["system"] == "build_only"),
-        None
-    )
-    s1_covered = s1_run.get("m1_found_paras", []) if s1_run else []
+    # Method 1: CLI-style spawn (what we're teaching it)
+    cli_patterns = [
+        r'opencode\s+run\s+--agent\s+explore',
+        r'opencode run --agent explore',
+        r'!opencode run --agent explore',
+    ]
+    for pat in cli_patterns:
+        if re.search(pat, stdout, re.IGNORECASE):
+            return True, "cli"
 
-    current_covered = run_entry.get("m1_found_paras", [])
+    # Method 2: Direct mention of spawn/explore
+    direct_patterns = [
+        r'spawn.*explore',
+        r'call.*explore',
+        r'use.*explore.*subagent',
+    ]
+    for pat in direct_patterns:
+        if re.search(pat, stdout_lower):
+            return True, "direct"
 
-    # Missing hops = gold paras S1 missed but this system found
-    s1_set = set(s1_covered)
-    extra = [p for p in current_covered if p not in s1_set and p in gold_paras]
-    return extra
-
-
-def compute_m3_integration_error_rate(run_entry):
-    """M3: Did Explore find gold paragraphs but Build still failed?"""
-    if not run_entry.get("used_subagents", False):
-        return None  # Not applicable for S1
-    explore_found = run_entry.get("m1_found_paras", [])
-    success = run_entry.get("success", False)
-    if explore_found and not success:
-        return True
-    return False
+    return False, None
 
 
-def compute_m4_tokens_per_correct(runs_for_system):
-    """M4: average total tokens for successful runs."""
-    successful = [r for r in runs_for_system if r.get("success", False)]
-    if not successful:
-        return float('inf')
-    total_tok = sum(r["token_usage"]["total_tokens"] for r in successful)
-    return total_tok / len(successful)
+def build_prompt_closed(task):
+    """Mode A: Build agent alone, no knowledge of subagents."""
+    return f"""TASK: Answer a multi-hop question by searching and reading documents.
+
+QUESTION: {task['question']}
+
+RESOURCES:
+- documents.txt: {task['num_paragraphs']} Wikipedia-style paragraphs. Each starts with "--- PARAGRAPH N ---".
+
+PROCESS:
+1. Use `grep` to search for keywords in documents.txt
+2. Use `read` to read specific paragraphs
+3. Chain information across paragraphs ({task['num_hops']}-hop question)
+4. When ready, output exactly on its own line: ANSWER: <your answer>
+
+IMPORTANT: Work entirely alone. Do not call any other agents or subagents. Use only your own tool calls (grep, read).
+
+Begin now."""
 
 
-def compute_m5_explore_found_build_failed(run_entry):
-    """M5: Explore found gold evidence but Build failed."""
-    if not run_entry.get("used_subagents", False):
-        return False
-    explore_found = run_entry.get("m1_found_paras", [])
-    success = run_entry.get("success", False)
-    return bool(explore_found) and not success
+def build_prompt_open(task):
+    """Mode B: Build agent knows it CAN call explore subagent when it wants."""
+    return f"""TASK: Answer a multi-hop question by searching and reading documents.
+
+QUESTION: {task['question']}
+
+RESOURCES:
+- documents.txt: {task['num_paragraphs']} Wikipedia-style paragraphs. Each starts with "--- PARAGRAPH N ---".
+
+PROCESS:
+1. You may use `grep` and `read` to search documents directly.
+2. If you want to delegate document exploration to a subagent, you can call:
+   opencode run --agent explore --dir <workdir> -- <your exploration task>
+   The explore subagent will search documents and return findings.
+3. Chain information across paragraphs ({task['num_hops']}-hop question)
+4. When ready, output exactly on its own line: ANSWER: <your answer>
+
+Decide for yourself whether to use the explore subagent or handle everything directly.
+
+Begin now."""
 
 
-def save_run_log(run_entry):
+def save_run_log(entry):
     log_file = f"{OUTPUT_ROOT}/runs.jsonl"
     with open(log_file, "a") as f:
-        f.write(json.dumps(run_entry, ensure_ascii=False) + "\n")
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-def run_single(task, system_key, all_runs_for_task=None):
-    """Run a single task+system combo with forced subagent spawning."""
-    run_id = f"{task['task_id']}__{system_key}__s0"
+def run_single(task, mode_key):
+    """Run a single task in the specified mode.
+    Only ONE OpenCode invocation — Build agent decides on spawn internally.
+    """
+    run_id = f"{task['task_id']}__{mode_key}"
     workdir, task_data = prepare_workdir(run_id, task)
-    sys_cfg = SYSTEMS[system_key]
 
-    total_runtime = 0
-    all_stdout = []
-    all_tokens = {"input": 0, "output": 0, "total": 0}
-    all_steps = 0
-    subagent_outputs = {}
+    mode_cfg = MODES[mode_key]
 
-    # ---- Phase 1: Run Explore subagent (if enabled) ----
-    if sys_cfg["use_explore"]:
-        explore_prompt = EXPLORE_PROMPT.format(
-            question=task["question"],
-            num_hops=task["num_hops"]
-        )
-        with open(f"{workdir}/prompt_explore.txt", "w") as f:
-            f.write(explore_prompt)
-
-        result = run_opencode(workdir, explore_prompt, agent="explore",
-                              timeout=120, log_suffix="explore")
-        total_runtime += result["runtime_sec"]
-
-        explore_text = extract_text_output(result["stdout"])
-
-        with open(f"{workdir}/stdout_explore.txt", "w") as f:
-            f.write(result["stdout"])
-        with open(f"{workdir}/stderr_explore.txt", "w") as f:
-            f.write(result["stderr"])
-
-        tokens_e, steps_e = parse_metrics(result["stdout"])
-        all_tokens["input"] += tokens_e["input"]
-        all_tokens["output"] += tokens_e["output"]
-        all_tokens["total"] += tokens_e["total"]
-        all_steps += steps_e
-        all_stdout.append(result["stdout"])
-
-        subagent_outputs["explore"] = explore_text[:4000]
-
-    # ---- Phase 2a: Run General subagent (S3) ----
-    if sys_cfg["use_general"]:
-        general_prompt = GENERAL_PROMPT.format(
-            question=task["question"],
-            explore_output=subagent_outputs.get("explore", "(Explore not run)")
-        )
-        with open(f"{workdir}/prompt_general.txt", "w") as f:
-            f.write(general_prompt)
-
-        result = run_opencode(workdir, general_prompt, agent="general",
-                              timeout=120, log_suffix="general")
-        total_runtime += result["runtime_sec"]
-
-        general_text = extract_text_output(result["stdout"])
-
-        with open(f"{workdir}/stdout_general.txt", "w") as f:
-            f.write(result["stdout"])
-        with open(f"{workdir}/stderr_general.txt", "w") as f:
-            f.write(result["stderr"])
-
-        tokens_g, steps_g = parse_metrics(result["stdout"])
-        all_tokens["input"] += tokens_g["input"]
-        all_tokens["output"] += tokens_g["output"]
-        all_tokens["total"] += tokens_g["total"]
-        all_steps += steps_g
-        all_stdout.append(result["stdout"])
-
-        subagent_outputs["general"] = general_text[:2000]
-
-    # ---- Phase 2b: Run Table generation (S4) ----
-    if sys_cfg["use_table"]:
-        table_prompt = TABLE_PROMPT.format(
-            question=task["question"],
-            num_hops=task["num_hops"],
-            explore_output=subagent_outputs.get("explore", "(Explore not run)")
-        )
-        with open(f"{workdir}/prompt_table.txt", "w") as f:
-            f.write(table_prompt)
-
-        result = run_opencode(workdir, table_prompt, agent="general",
-                              timeout=120, log_suffix="table")
-        total_runtime += result["runtime_sec"]
-
-        table_text = extract_text_output(result["stdout"])
-
-        with open(f"{workdir}/stdout_table.txt", "w") as f:
-            f.write(result["stdout"])
-        with open(f"{workdir}/stderr_table.txt", "w") as f:
-            f.write(result["stderr"])
-
-        tokens_t, steps_t = parse_metrics(result["stdout"])
-        all_tokens["input"] += tokens_t["input"]
-        all_tokens["output"] += tokens_t["output"]
-        all_tokens["total"] += tokens_t["total"]
-        all_steps += steps_t
-        all_stdout.append(result["stdout"])
-
-        subagent_outputs["table"] = table_text[:2000]
-
-    # ---- Phase 3: Run Build with subagent context ----
-    context_parts = []
-    if "explore" in subagent_outputs:
-        context_parts.append(f"=== EXPLORE SUBAGENT FINDINGS ===\n{subagent_outputs['explore']}")
-    if "general" in subagent_outputs:
-        context_parts.append(f"=== GENERAL SUBAGENT REVIEW ===\n{subagent_outputs['general']}")
-    if "table" in subagent_outputs:
-        context_parts.append(f"=== STRUCTURED EVIDENCE TABLE ===\n{subagent_outputs['table']}")
-
-    subagent_context = "\n\n".join(context_parts) if context_parts else \
-        "No subagent findings available. Search documents.txt yourself.\n" \
-        "IMPORTANT: Do NOT use any subagents. Use only direct tool calls (grep, read)."
-
-    # All systems use BUILD_PROMPT (S1 gets generic "no subagent" context; what worked in Stage 1A)
-    build_prompt = BUILD_PROMPT.format(
-        question=task["question"],
-        subagent_context=subagent_context,
-        num_hops=task["num_hops"]
-    )
+    if mode_key == "spawn_closed":
+        prompt = build_prompt_closed(task)
+    else:
+        prompt = build_prompt_open(task)
 
     with open(f"{workdir}/prompt_build.txt", "w") as f:
-        f.write(build_prompt)
+        f.write(prompt)
 
-    result = run_opencode(workdir, build_prompt, agent="build",
-                          timeout=600, log_suffix="build")
-    total_runtime += result["runtime_sec"]
+    # Single OpenCode run — Build decides internally
+    result = run_opencode(workdir, prompt, agent="build", timeout=600, log_suffix="build")
+    elapsed = result["runtime_sec"]
 
-    with open(f"{workdir}/stdout_build.txt", "w") as f:
-        f.write(result["stdout"])
-    with open(f"{workdir}/stderr_build.txt", "w") as f:
-        f.write(result["stderr"])
+    tokens, steps = parse_metrics(result["stdout"])
+    stdout = result["stdout"]
+    stderr = result["stderr"]
 
-    tokens_b, steps_b = parse_metrics(result["stdout"])
-    all_tokens["input"] += tokens_b["input"]
-    all_tokens["output"] += tokens_b["output"]
-    all_tokens["total"] += tokens_b["total"]
-    all_steps += steps_b
-    all_stdout.append(result["stdout"])
-
-    # ---- Evaluate ----
-    combined_stdout = "\n".join(all_stdout)
-    answer = extract_answer(combined_stdout, result["stderr"])
+    # Extract answer
+    answer = extract_answer(stdout, stderr)
     success, eval_detail = evaluate(answer, task["answer"], task["answer_aliases"])
 
-    # ---- Compute M1: evidence recall ----
-    # NOTE: pass 'task' (from tasks.jsonl, has post_hoc_features) not 'task_data' (per-task paragraph file)
-    explore_text = subagent_outputs.get("explore", "")
-    m1_recall, m1_found_paras = compute_m1_evidence_recall(explore_text, task)
-
-    # ---- Compute M2: missing-hop coverage (needs all runs, filled in main) ----
-    m2_extra_paras = []
-
-    # ---- Compute M5 early ----
-    used_subagents = sys_cfg["use_explore"] or sys_cfg["use_general"] or sys_cfg["use_table"]
-    m5_explore_found_build_failed = compute_m5_explore_found_build_failed({
-        "used_subagents": used_subagents,
-        "m1_found_paras": m1_found_paras,
-        "success": success,
-    })
-
-    subagent_count = sum(1 for v in [sys_cfg["use_explore"], sys_cfg["use_general"], sys_cfg["use_table"]] if v)
+    # Detect spawn attempt
+    spawn_attempted, spawn_method = detect_spawn_attempt(stdout)
 
     entry = {
         "run_id": run_id,
         "task_id": task["task_id"],
-        "system": system_key,
-        "budget_setting": "equal_generation",
-        "seed": 0,
+        "mode": mode_key,
         "model": "qwen35-9b",
         "difficulty_bucket": task["difficulty_bucket"],
         "num_hops": task["num_hops"],
@@ -607,313 +367,19 @@ def run_single(task, system_key, all_runs_for_task=None):
         "success": success,
         "eval_detail": eval_detail,
         "token_usage": {
-            "input_tokens": {"total": all_tokens["input"]},
-            "output_tokens": {"total": all_tokens["output"]},
-            "total_tokens": all_tokens["total"],
+            "input_tokens": tokens["input"],
+            "output_tokens": tokens["output"],
+            "total_tokens": tokens["total"],
         },
-        "runtime_sec": total_runtime,
-        "steps": all_steps,
-        "subagent_calls_total": subagent_count,
-        "used_subagents": used_subagents,
+        "runtime_sec": elapsed,
+        "steps": steps,
+        "spawn_attempted": spawn_attempted,
+        "spawn_method": spawn_method,
         "exit_code": result.get("exit_code", -1),
         "timeout": result.get("timeout", False),
-
-        # ---- M1: Evidence Recall ----
-        "m1_evidence_recall": m1_recall,
-        "m1_found_paras": m1_found_paras,
-        "m1_gold_paras": [p["idx"] for p in task_data.get("paragraphs", []) if p.get("is_supporting", False)],
-
-        # ---- M2: Missing-hop coverage (filled post-hoc) ----
-        "m2_extra_paras": m2_extra_paras,
-
-        # ---- M3: Integration error (filled post-hoc per-system) ----
-        "m3_integration_error": None,  # Computed per-system across all runs
-
-        # ---- M4: Tokens per correct answer (filled post-hoc) ----
-        "m4_tokens_per_correct": None,  # Computed per-system
-
-        # ---- M5: Explore-found / Build-failed ----
-        "m5_explore_found_build_failed": m5_explore_found_build_failed,
-
-        "failure_analysis": {
-            "failed": not success,
-            "primary_failure_type": "none" if success else "other",
-            "failure_tags": [],
-            "notes": ""
-        }
     }
 
     save_run_log(entry)
-    return entry
-
-
-def compute_post_hoc_metrics(all_runs):
-    """Compute M2, M3, M4 after all runs complete.
-    M2 needs S1 baseline to compare against.
-    M3 and M4 are per-system aggregates.
-    """
-    # Group by task_id
-    by_task = {}
-    for r in all_runs:
-        by_task.setdefault(r["task_id"], []).append(r)
-
-    # M2: missing-hop coverage for each run
-    for task_id, runs in by_task.items():
-        s1_run = next((r for r in runs if r["system"] == "build_only"), None)
-        s1_covered = set(s1_run["m1_found_paras"]) if s1_run else set()
-        for r in runs:
-            if r["system"] == "build_only":
-                r["m2_extra_paras"] = []
-            else:
-                gold_paras = set(r["m1_gold_paras"])
-                extra = [p for p in r["m1_found_paras"] if p not in s1_covered and p in gold_paras]
-                r["m2_extra_paras"] = extra
-
-    # M3: integration error rate per system
-    by_system = {}
-    for r in all_runs:
-        by_system.setdefault(r["system"], []).append(r)
-
-    m3_by_system = {}
-    for sk, runs in by_system.items():
-        if sk == "build_only":
-            m3_by_system[sk] = None
-            continue
-        # Integration error = Explore found gold para but Build failed
-        total_with_subagent = len([r for r in runs if r.get("used_subagents", False)])
-        errors = sum(1 for r in runs if r.get("used_subagents", False) and
-                     r["m1_found_paras"] and not r["success"])
-        m3_by_system[sk] = errors / total_with_subagent if total_with_subagent else None
-
-    # M4: tokens per correct answer per system
-    m4_by_system = {}
-    for sk, runs in by_system.items():
-        m4_by_system[sk] = compute_m4_tokens_per_correct(runs)
-
-    # Update runs with post-hoc metrics
-    for r in all_runs:
-        r["m3_integration_error"] = m3_by_system.get(r["system"])
-        r["m4_tokens_per_correct"] = m4_by_system.get(r["system"])
-
-    return m3_by_system, m4_by_system
-
-
-def print_metrics_summary(all_runs, m3_by_system, m4_by_system):
-    """Print M1-M5 summary table."""
-    by_system = {}
-    for r in all_runs:
-        by_system.setdefault(r["system"], []).append(r)
-
-    print(f"\n{'='*70}")
-    print("STAGE 1B METRICS SUMMARY (M1-M5)")
-    print(f"{'='*70}")
-
-    systems_order = ["build_only", "build_explore", "build_explore_general", "build_explore_table"]
-    systems_display = {
-        "build_only": "S1 Build-only",
-        "build_explore": "S2 Explore→Build",
-        "build_explore_general": "S3 Explore→General→Build",
-        "build_explore_table": "S4 Explore→Table→Build",
-    }
-
-    # Header
-    print(f"{'System':<28} {'Succ':>5} {'M1 Rec':>7} {'M2 Ex':>5} {'M3 IntErr':>9} {'M4 tok/correct':>14} {'M5 E→B fail':>11}")
-    print("-" * 85)
-
-    for sk in systems_order:
-        runs = by_system.get(sk, [])
-        if not runs:
-            continue
-
-        sr = sum(1 for r in runs if r["success"]) / len(runs)
-        avg_m1 = sum(r["m1_evidence_recall"] for r in runs) / len(runs)
-        avg_m2 = sum(len(r["m2_extra_paras"]) for r in runs) / len(runs)
-
-        m3_val = m3_by_system.get(sk)
-        m4_val = m4_by_system.get(sk)
-
-        m3_str = f"{m3_val:.0%}" if m3_val is not None else "  N/A  "
-        m4_str = f"{m4_val:,.0f}" if m4_val and m4_val != float('inf') else "   N/A"
-        m5_count = sum(1 for r in runs if r.get("m5_explore_found_build_failed", False))
-
-        print(f"{systems_display[sk]:<28} {sr:>5.0%} {avg_m1:>7.0%} {avg_m2:>5.1f} {m3_str:>9} {m4_str:>14} {m5_count:>11}")
-
-    print()
-    # Per-hop breakdown
-    print("Per-hop breakdown:")
-    for hops in [2, 3, 4]:
-        hop_runs = [r for r in all_runs if r["num_hops"] == hops]
-        if not hop_runs:
-            continue
-        print(f"  {hops}-hop ({len(hop_runs)} runs): ", end="")
-        for sk in systems_order:
-            sk_hops = [r for r in hop_runs if r["system"] == sk]
-            if not sk_hops:
-                continue
-            sr = sum(1 for r in sk_hops if r["success"]) / len(sk_hops)
-            print(f"  {systems_display[sk].split()[0]}={sr:.0%}", end="")
-        print()
-
-
-def rebuild_from_existing_run(task, system_key):
-    """Rebuild run entry from existing output files without re-running OpenCode.
-    Returns None if run directory or stdout_build.txt doesn't exist."""
-    run_id = f"{task['task_id']}__{system_key}__s0"
-    workdir = f"{OUTPUT_ROOT}/runs/{run_id}"
-    # Check both new (stdout_build.txt) and old (stdout.txt) naming
-    has_output = (os.path.exists(f"{workdir}/stdout_build.txt") or
-                  os.path.exists(f"{workdir}/stdout.txt"))
-    if not has_output:
-        return None
-
-    sys_cfg = SYSTEMS[system_key]
-    task_data_file = f"{TASK_DATA_DIR}/{task['task_id']}.json"
-    with open(task_data_file) as f:
-        task_data = json.load(f)
-
-    # Read all stdout files
-    all_stdout = []
-    all_tokens = {"input": 0, "output": 0, "total": 0}
-    all_steps = 0
-    total_runtime = 0
-    subagent_outputs = {}
-
-    # Read build stdout (try suffix variants: new harness writes stdout_build.txt, old writes stdout.txt)
-    build_stdout = None
-    build_stderr = ""
-    for (out_suffix, err_suffix) in [("build", "build"), ("", "")]:
-        out_path = f"{workdir}/stdout_{out_suffix}.txt" if out_suffix else f"{workdir}/stdout.txt"
-        err_path = f"{workdir}/stderr_{err_suffix}.txt" if err_suffix else f"{workdir}/stderr.txt"
-        if os.path.exists(out_path):
-            with open(out_path) as f:
-                build_stdout = f.read()
-            if os.path.exists(err_path):
-                with open(err_path) as f:
-                    build_stderr = f.read()
-            break
-
-    if build_stdout is None:
-        return None  # No usable stdout
-
-    all_stdout.append(build_stdout)
-    tokens_b, steps_b = parse_metrics(build_stdout)
-    for k in all_tokens:
-        all_tokens[k] += tokens_b[k]
-    all_steps += steps_b
-
-    # Read explore stdout if this system uses it
-    if sys_cfg["use_explore"]:
-        for suffix in ["explore", ""]:
-            explore_stdout_path = f"{workdir}/stdout_{suffix}.txt" if suffix else f"{workdir}/stdout.txt"
-            if os.path.exists(explore_stdout_path):
-                with open(explore_stdout_path) as f:
-                    explore_stdout = f.read()
-                all_stdout.append(explore_stdout)
-                tokens_e, steps_e = parse_metrics(explore_stdout)
-                for k in all_tokens:
-                    all_tokens[k] += tokens_e[k]
-                all_steps += steps_e
-                explore_text = extract_text_output(explore_stdout)
-                subagent_outputs["explore"] = explore_text[:4000]
-                break
-
-    # Read general stdout if this system uses it
-    if sys_cfg["use_general"]:
-        for suffix in ["general", ""]:
-            general_stdout_path = f"{workdir}/stdout_{suffix}.txt" if suffix else f"{workdir}/stdout.txt"
-            if os.path.exists(general_stdout_path):
-                with open(general_stdout_path) as f:
-                    general_stdout = f.read()
-                all_stdout.append(general_stdout)
-                tokens_g, steps_g = parse_metrics(general_stdout)
-                for k in all_tokens:
-                    all_tokens[k] += tokens_g[k]
-                all_steps += steps_g
-                general_text = extract_text_output(general_stdout)
-                subagent_outputs["general"] = general_text[:2000]
-                break
-
-    # Read table stdout if this system uses it
-    if sys_cfg["use_table"]:
-        for suffix in ["table", ""]:
-            table_stdout_path = f"{workdir}/stdout_{suffix}.txt" if suffix else f"{workdir}/stdout.txt"
-            if os.path.exists(table_stdout_path):
-                with open(table_stdout_path) as f:
-                    table_stdout = f.read()
-                all_stdout.append(table_stdout)
-                tokens_t, steps_t = parse_metrics(table_stdout)
-                for k in all_tokens:
-                    all_tokens[k] += tokens_t[k]
-                all_steps += steps_t
-                table_text = extract_text_output(table_stdout)
-                subagent_outputs["table"] = table_text[:2000]
-                break
-
-    # Estimate runtime from file timestamps (rough)
-    if os.path.exists(f"{workdir}/task_info.json"):
-        out_path = f"{workdir}/stdout_build.txt"
-        if not os.path.exists(out_path):
-            out_path = f"{workdir}/stdout.txt"
-        total_runtime = os.path.getmtime(out_path) - os.path.getmtime(f"{workdir}/task_info.json")
-
-    # Evaluate
-    combined_stdout = "\n".join(all_stdout)
-    answer = extract_answer(combined_stdout, build_stderr)
-    success, eval_detail = evaluate(answer, task["answer"], task["answer_aliases"])
-
-    # M1
-    explore_text = subagent_outputs.get("explore", "")
-    m1_recall, m1_found_paras = compute_m1_evidence_recall(explore_text, task_data)
-
-    # M5
-    used_subagents = sys_cfg["use_explore"] or sys_cfg["use_general"] or sys_cfg["use_table"]
-    m5_explore_found_build_failed = compute_m5_explore_found_build_failed({
-        "used_subagents": used_subagents,
-        "m1_found_paras": m1_found_paras,
-        "success": success,
-    })
-
-    subagent_count = sum(1 for v in [sys_cfg["use_explore"], sys_cfg["use_general"], sys_cfg["use_table"]] if v)
-
-    entry = {
-        "run_id": run_id,
-        "task_id": task["task_id"],
-        "system": system_key,
-        "budget_setting": "equal_generation",
-        "seed": 0,
-        "model": "qwen35-9b",
-        "difficulty_bucket": task["difficulty_bucket"],
-        "num_hops": task["num_hops"],
-        "question": task["question"],
-        "gold_answer": task["answer"],
-        "predicted_answer": answer,
-        "success": success,
-        "eval_detail": eval_detail,
-        "token_usage": {
-            "input_tokens": {"total": all_tokens["input"]},
-            "output_tokens": {"total": all_tokens["output"]},
-            "total_tokens": all_tokens["total"],
-        },
-        "runtime_sec": max(total_runtime, 0),
-        "steps": all_steps,
-        "subagent_calls_total": subagent_count,
-        "used_subagents": used_subagents,
-        "exit_code": 0,
-        "timeout": False,
-        "m1_evidence_recall": m1_recall,
-        "m1_found_paras": m1_found_paras,
-        "m1_gold_paras": [p["idx"] for p in task_data.get("paragraphs", []) if p.get("is_supporting", False)],
-        "m2_extra_paras": [],
-        "m3_integration_error": None,
-        "m4_tokens_per_correct": None,
-        "m5_explore_found_build_failed": m5_explore_found_build_failed,
-        "failure_analysis": {
-            "failed": not success,
-            "primary_failure_type": "none" if success else "other",
-            "failure_tags": [],
-            "notes": "(rebuilt from existing run)"
-        }
-    }
     return entry
 
 
@@ -923,21 +389,16 @@ def main():
     if resume_mode:
         sys.argv.remove("--resume")
 
-    # Allow running a subset
-    systems_to_run = list(SYSTEMS.keys())
+    modes_to_run = list(MODES.keys())
     if len(sys.argv) > 1:
         subset = sys.argv[1]
         if subset == "test":
             tasks = tasks[:1]
             print("TEST MODE: 1 task")
-        elif subset == "s1":
-            systems_to_run = ["build_only"]
-        elif subset == "s2":
-            systems_to_run = ["build_explore"]
-        elif subset == "s3":
-            systems_to_run = ["build_explore_general"]
-        elif subset == "s4":
-            systems_to_run = ["build_explore_table"]
+        elif subset == "closed":
+            modes_to_run = ["spawn_closed"]
+        elif subset == "open":
+            modes_to_run = ["spawn_open"]
         elif subset == "2hop":
             tasks = [t for t in tasks if t["num_hops"] == 2]
         elif subset == "3hop":
@@ -947,10 +408,9 @@ def main():
         else:
             tasks = [t for t in tasks if t["task_id"] == subset]
 
-    print(f"Harness: {len(tasks)} tasks × {len(systems_to_run)} systems = {len(tasks)*len(systems_to_run)} runs")
+    print(f"Harness: {len(tasks)} tasks × {len(modes_to_run)} modes = {len(tasks)*len(modes_to_run)} runs")
     sys.stdout.flush()
 
-    # Two-level resume: (1) runs.jsonl entries, (2) existing run directories
     existing_entries = {}
     if resume_mode:
         log_file = f"{OUTPUT_ROOT}/runs.jsonl"
@@ -959,68 +419,70 @@ def main():
                 for line in f:
                     if line.strip():
                         r = json.loads(line)
-                        existing_entries[(r["task_id"], r["system"])] = r
+                        existing_entries[(r["task_id"], r["mode"])] = r
             print(f"RESUME: found {len(existing_entries)} entries in runs.jsonl")
 
     results = []
     for i, task in enumerate(tasks):
-        for j, system_key in enumerate(systems_to_run):
-            idx = i * len(systems_to_run) + j + 1
-            total = len(tasks) * len(systems_to_run)
-            key = (task["task_id"], system_key)
-            print(f"\n[{idx}/{total}] {task['task_id']} | {system_key} | {task['num_hops']}hop")
+        for j, mode_key in enumerate(modes_to_run):
+            idx = i * len(modes_to_run) + j + 1
+            total = len(tasks) * len(modes_to_run)
+            key = (task["task_id"], mode_key)
+            print(f"\n[{idx}/{total}] {task['task_id']} | {mode_key} | {task['num_hops']}hop")
             sys.stdout.flush()
 
-            # Resume level 1: runs.jsonl entry
             if resume_mode and key in existing_entries:
                 entry = existing_entries[key]
                 status = "✅" if entry["success"] else "❌"
-                print(f"  ⏭️  SKIP (runs.jsonl) | {status} Answer: '{str(entry.get('predicted_answer',''))[:60]}' | "
+                spawn = "🔗" if entry.get("spawn_attempted") else "  "
+                print(f"  ⏭️  SKIP | {status}{spawn} Answer: '{str(entry.get('predicted_answer',''))[:50]}' | "
                       f"{entry['token_usage']['total_tokens']} tok")
                 results.append(entry)
                 continue
 
-            # Resume level 2: existing run directory with stdout
-            if resume_mode:
-                entry = rebuild_from_existing_run(task, system_key)
-                if entry is not None:
-                    status = "✅" if entry["success"] else "❌"
-                    print(f"  ⏭️  SKIP (rebuilt from dir) | {status} Answer: '{entry['predicted_answer'][:60]}' | "
-                          f"{entry['token_usage']['total_tokens']} tok")
-                    results.append(entry)
-                    continue
-
-            # Fresh run
-            entry = run_single(task, system_key)
+            entry = run_single(task, mode_key)
 
             status = "✅" if entry["success"] else "❌"
-            m1_pct = entry["m1_evidence_recall"]
-            print(f"  {status} Answer: '{entry['predicted_answer'][:60]}' (gold: '{entry['gold_answer']}') | "
-                  f"M1={m1_pct:.0%} | {entry['token_usage']['total_tokens']} tok | {entry['runtime_sec']:.0f}s | "
-                  f"{entry['subagent_calls_total']} subagents")
-            sys.stdout.flush()
+            spawn = "🔗" if entry.get("spawn_attempted") else "  "
+            print(f"  {status}{spawn} Answer: '{entry['predicted_answer'][:50]}' (gold: '{entry['gold_answer']}') | "
+                  f"{entry['token_usage']['total_tokens']} tok | {entry['runtime_sec']:.0f}s")
+
             results.append(entry)
 
-    # Post-hoc M2, M3, M4
-    m3_by_system, m4_by_system = compute_post_hoc_metrics(results)
+    # ---- Print Summary ----
+    print(f"\n{'='*70}")
+    print("RESULTS SUMMARY")
+    print(f"{'='*70}")
 
-    # Merge with existing runs.jsonl entries (don't overwrite — preserve other systems)
-    log_file = f"{OUTPUT_ROOT}/runs.jsonl"
-    merged = {}
-    if os.path.exists(log_file):
-        with open(log_file) as f:
-            for line in f:
-                if line.strip():
-                    r = json.loads(line)
-                    merged[(r["task_id"], r["system"])] = r
+    by_mode = {}
     for r in results:
-        merged[(r["task_id"], r["system"])] = r
-    with open(log_file, "w") as f:
-        for r in merged.values():
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        by_mode.setdefault(r["mode"], []).append(r)
 
-    # Print summary
-    print_metrics_summary(results, m3_by_system, m4_by_system)
+    print(f"\n{'Mode':<20} {'Tasks':>5} {'Success':>7} {'Spawned':>8} {'Tok/ans':>12}")
+    print("-" * 55)
+    for mk in modes_to_run:
+        runs = by_mode.get(mk, [])
+        if not runs:
+            continue
+        n = len(runs)
+        sr = sum(1 for r in runs if r["success"]) / n
+        spawned = sum(1 for r in runs if r.get("spawn_attempted", False))
+        print(f"{mk:<20} {n:>5} {sr:>7.0%} {spawned:>8} {'—':>12}")
+
+    print("\nPer-hop breakdown:")
+    for hops in [2, 3, 4]:
+        hop_runs = [r for r in results if r["num_hops"] == hops]
+        if not hop_runs:
+            continue
+        print(f"  {hops}-hop ({len(hop_runs)} runs):", end="")
+        for mk in modes_to_run:
+            mk_hops = [r for r in hop_runs if r["mode"] == mk]
+            if not mk_hops:
+                continue
+            sr = sum(1 for r in mk_hops if r["success"]) / len(mk_hops)
+            spawned = sum(1 for r in mk_hops if r.get("spawn_attempted", False))
+            print(f"  {mk.split('_')[1]}={sr:.0%}({spawned}s)", end="")
+        print()
 
 
 if __name__ == "__main__":

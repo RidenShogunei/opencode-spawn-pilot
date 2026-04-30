@@ -1,9 +1,0 @@
-{
-  "run_id": "musique_3hop_004__build_explore_table__s0",
-  "task_id": "musique_3hop_004",
-  "question": "In what region of Phu Luong's country is John Phan's birthplace located?",
-  "answer": "South Central Coast",
-  "answer_aliases": [],
-  "num_hops": 3,
-  "difficulty_bucket": "multi_file"
-}

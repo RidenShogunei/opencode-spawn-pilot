@@ -1,9 +1,0 @@
-{
-  "run_id": "musique_4hop_009__build_explore_table__s0",
-  "task_id": "musique_4hop_009",
-  "question": "What shares a border with the city where the person who went to the state where the planes were originally going on 9/11 during the gold rush works?",
-  "answer": "Rio Linda",
-  "answer_aliases": [],
-  "num_hops": 4,
-  "difficulty_bucket": "long_context"
-}
