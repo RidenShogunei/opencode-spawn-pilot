@@ -1,97 +1,67 @@
 #!/bin/bash
-# spawn_explore.sh — Wrapper for actual explore subagent calls
-# Records every real spawn event to spawn_events.jsonl
-#
-# Usage:
-#   ./spawn_explore.sh "<task_id>" "<run_id>" "<workdir>" "<exploration_task>"
-#
-# Writes: spawn_events.jsonl with one JSON object per real spawn call
+# Spawns OpenCode explore subagent for a given task
+# Args: <task_id> <run_id> <workdir> "<exploration_task>"
 
 set -e
 
 TASK_ID="$1"
 RUN_ID="$2"
 WORKDIR="$3"
-shift 3
-EXPLORATION_TASK="$*"
+EXPLORATION_TASK="$4"
+OPENCODE="/home/jinxu/.opencode/bin/opencode"
+MODEL="local/qwen35-9b"
+EVENTS_FILE="$WORKDIR/spawn_events.jsonl"
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-EVENTS_DIR="$PROJECT_DIR/outputs/opencode_spawn_pilot/spawn_events"
-EVENTS_FILE="$EVENTS_DIR/spawn_events.jsonl"
+mkdir -p "$WORKDIR"
 
-if [ -z "$TASK_ID" ] || [ -z "$RUN_ID" ] || [ -z "$WORKDIR" ]; then
-    echo "ERROR: Missing required arguments" >&2
-    echo "Usage: spawn_explore.sh <task_id> <run_id> <workdir> <exploration_task>" >&2
-    exit 1
-fi
+# Run explore agent
+START=$(date +%s.%N)
+OUTPUT=$(mktemp)
+ERRORS=$(mktemp)
 
-mkdir -p "$EVENTS_DIR"
-
-# Temp files for child outputs
-STDOUT_F=$(mktemp)
-STDERR_F=$(mktemp)
-
-TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-EXIT_CODE=0
-
-OPENCODE_BIN="/home/jinxu/.opencode/bin/opencode"
-
-$OPENCODE_BIN run \
+timeout 60 bash "$OPENCODE" run \
     --agent explore \
-    --dir "$WORKDIR" \
+    --model "$MODEL" \
     --format json \
-    --print-logs \
-    "TASK: $EXPLORATION_TASK" \
-    > "$STDOUT_F" 2> "$STDERR_F" \
+    --title "explore-$TASK_ID" \
+    -- "$EXPLORATION_TASK" \
+    > "$OUTPUT" 2> "$ERRORS" \
     || EXIT_CODE=$?
 
-# Read outputs (cap at 50KB)
-STDOUT_CONTENT=$(cat "$STDOUT_F" 2>/dev/null | head -c 51200 || echo "")
-STDERR_CONTENT=$(cat "$STDERR_F" 2>/dev/null | head -c 51200 || echo "")
+END=$(date +%s.%N)
+DURATION=$(echo "$END - $START" | bc)
 
-# Write event to JSONL using Python for safe JSON encoding
-python3 - "$TIMESTAMP" "$TASK_ID" "$RUN_ID" "$WORKDIR" "$EXPLORATION_TASK" "$EXIT_CODE" "$STDOUT_CONTENT" "$STDERR_CONTENT" "$STDOUT_F" "$STDERR_F" << 'PYEOF'
-import sys, json, os
+# Extract text output from JSON lines
+TEXT_OUTPUT=$(grep '"type":"text"' "$OUTPUT" 2>/dev/null | \
+    python3 -c "
+import sys, json
+texts = []
+for line in sys.stdin:
+    try:
+        obj = json.loads(line)
+        if 'part' in obj and 'text' in obj['part']:
+            texts.append(obj['part']['text'])
+    except: pass
+print('\n'.join(texts))
+" 2>/dev/null || echo "(no output)")
 
-ts, task_id, run_id, workdir, exploration_task = sys.argv[1:6]
-exit_code = int(sys.argv[6])
-stdout_content = sys.argv[7]
-stderr_content = sys.argv[8]
-stdout_file = sys.argv[9]
-stderr_file = sys.argv[10]
-
-events_file = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
-    "outputs", "opencode_spawn_pilot", "spawn_events", "spawn_events.jsonl"
-)
-os.makedirs(os.path.dirname(events_file), exist_ok=True)
+# Write spawn event
+python3 -c "
+import json, datetime, sys
 
 event = {
-    "timestamp": ts,
-    "task_id": task_id,
-    "run_id": run_id,
-    "workdir": workdir,
-    "exploration_task": exploration_task[:2000],
-    "exit_code": exit_code,
-    "child_stdout_lines": len(stdout_content.splitlines()) if stdout_content else 0,
-    "child_stderr_lines": len(stderr_content.splitlines()) if stderr_content else 0,
-    "child_stdout_preview": stdout_content[:500],
-    "child_stderr_preview": stderr_content[:500],
+    'timestamp': datetime.datetime.now().isoformat(),
+    'task_id': '$TASK_ID',
+    'run_id': '$RUN_ID',
+    'exploration_task': '''$EXPLORATION_TASK''',
+    'exit_code': ${EXIT_CODE:-0},
+    'duration': $DURATION,
+    'child_stdout_preview': '''$TEXT_OUTPUT'''[:1000],
+    'child_stderr_preview': open('$ERRORS').read()[:500] if True else '',
 }
 
-with open(events_file, "a", encoding="utf-8") as f:
-    f.write(json.dumps(event, ensure_ascii=False) + "\n")
+with open('$EVENTS_FILE', 'a') as f:
+    f.write(json.dumps(event) + '\n')
+"
 
-# Echo child stdout to our stdout for parent agent
-sys.stdout.write(stdout_content)
-PYEOF
-
-PY_EXIT=$?
-
-rm -f "$STDOUT_F" "$STDERR_F"
-
-if [ $PY_EXIT -ne 0 ]; then
-    exit $PY_EXIT
-fi
-exit $EXIT_CODE
+rm -f "$OUTPUT" "$ERRORS"
