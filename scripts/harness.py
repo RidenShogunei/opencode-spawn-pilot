@@ -15,7 +15,7 @@ M2a two-phase protocol:
 Spawn ground truth: spawn_events.jsonl (written by wrapper). No stdout regex.
 """
 
-import json, os, subprocess, time, re, sys
+import json, os, subprocess, time, re, sys, argparse
 from pathlib import Path
 
 PROJECT_ROOT = "/home/jinxu/opencode-spawn-pilot"
@@ -702,32 +702,53 @@ def summarize_results(results, modes_to_run):
 
 # ─── CLI / Main ─────────────────────────────────────────────────────────────
 
-def main():
-    tasks = load_tasks()
-    resume_mode = "--resume" in sys.argv
-    if resume_mode:
-        sys.argv.remove("--resume")
+def parse_args():
+    parser = argparse.ArgumentParser(description="OpenCode Spawn Pilot Harness")
+    parser.add_argument("command", nargs="?", default="run",
+                        choices=["run", "test", "report"])
+    parser.add_argument("--modes", default="M0,M1,M2a",
+                        help="Comma-separated modes to run (default: M0,M1,M2a)")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from existing runs, skip completed ones")
+    parser.add_argument("--subset", default=None,
+                        choices=["test","m0","m1","m2a","2hop","3hop","4hop"],
+                        help="Shortcut subset (overrides --modes)")
+    parser.add_argument("task_filter", nargs="?", default=None,
+                        help="Task ID to run single task")
+    return parser.parse_args()
 
+def main():
+    args = parse_args()
+
+    # Determine modes
     modes_to_run = list(MODES.keys())
-    if len(sys.argv) > 1:
-        subset = sys.argv[1]
-        if subset == "test":
-            tasks = tasks[:1]
-            print("TEST MODE: 1 task")
-        elif subset == "m0":
-            modes_to_run = ["M0_spawn_closed"]
-        elif subset == "m1":
-            modes_to_run = ["M1_spawn_affordance"]
-        elif subset == "m2a":
-            modes_to_run = ["M2a_harness_decision"]
-        elif subset == "2hop":
-            tasks = [t for t in tasks if t["num_hops"] == 2]
-        elif subset == "3hop":
-            tasks = [t for t in tasks if t["num_hops"] == 3]
-        elif subset == "4hop":
-            tasks = [t for t in tasks if t["num_hops"] == 4]
-        else:
-            tasks = [t for t in tasks if t["task_id"] == subset]
+    if args.subset == "m0":
+        modes_to_run = ["M0_spawn_closed"]
+    elif args.subset == "m1":
+        modes_to_run = ["M1_spawn_affordance"]
+    elif args.subset == "m2a":
+        modes_to_run = ["M2a_harness_decision"]
+    elif args.modes and args.modes != "M0,M1,M2a":
+        # Parse comma-separated modes
+        requested = [m.strip() for m in args.modes.split(",")]
+        mode_map = {"M0": "M0_spawn_closed", "M1": "M1_spawn_affordance", "M2a": "M2a_harness_decision"}
+        modes_to_run = [mode_map[m] for m in requested if m in mode_map]
+
+    # Determine tasks
+    tasks = load_tasks()
+    if args.command == "test":
+        tasks = tasks[:1]
+        print("TEST MODE: 1 task")
+    elif args.subset == "2hop":
+        tasks = [t for t in tasks if t["num_hops"] == 2]
+    elif args.subset == "3hop":
+        tasks = [t for t in tasks if t["num_hops"] == 3]
+    elif args.subset == "4hop":
+        tasks = [t for t in tasks if t["num_hops"] == 4]
+    elif args.task_filter:
+        tasks = [t for t in tasks if t["task_id"] == args.task_filter]
+
+    resume_mode = args.resume
 
     print(f"Harness: {len(tasks)} tasks × {len(modes_to_run)} modes = {len(tasks)*len(modes_to_run)} runs")
     sys.stdout.flush()
