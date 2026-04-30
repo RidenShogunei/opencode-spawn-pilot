@@ -234,12 +234,58 @@ python3 scripts/prompt_variants.py --limit 10 --variant <variant_name>
 
 ---
 
-## 8. Open Questions
+## 8. Critical Design Flaw
 
-1. **Why does model ignore prompt constraints?** v4 says "don't spawn" but model spawns anyway
-2. **Why doesn't spawn improve accuracy?** v1 has highest spawn rate but same accuracy as v4
-3. **Does subagent quality matter more than spawn rate?** Subagent using internal knowledge instead of documents
-4. **Would removing task tool from build agent change behavior?** Current tests can't establish true no-spawn baseline
+**The experiment never established a true single-agent baseline because the model was never taught how subagent spawning works in OpenCode.**
+
+Core problem: We told the model "use the task tool" but never explained the mechanics. The model cannot learn the spawn mechanism from prompts alone — it only sees the framework-level tool description.
+
+### Attempted Solutions and Why They Failed
+
+| Approach | Why It Failed |
+|----------|--------------|
+| Tell model "don't use subagents" (v4) | Model ignores instruction, still spawns 40% — task tool is in its tool list |
+| Tell model "can use task" (v2/v3) | Model rarely spawns (20%) — doesn't understand spawn mechanics |
+| Tell model "MUST use task" (v1) | Highest spawn rate (80%) but model may ignore subagent results |
+
+### Potential Fix: Disable Task Tool via Config
+
+```json
+// ~/.config/opencode/opencode.json
+"agent": {
+  "build": {
+    "tools": {
+      "task": false
+    }
+  }
+}
+```
+
+**If this works**: Build agent loses task tool entirely → true single-agent baseline.
+**If this doesn't work**: task is a framework-builtin that cannot be disabled this way.
+
+### Correct Experiment Design (If Task Can Be Disabled)
+
+| Mode | Build Agent Config | Expected Behavior |
+|------|-------------------|------------------|
+| **Mode A (true single-agent)** | `tools: { task: false }` | No spawn possible |
+| **Mode B (forced spawn)** | task enabled + v1 prompt | Must spawn |
+| **Mode C (optional spawn)** | task enabled + v2 prompt | Spawn optional |
+
+### If Task Cannot Be Disabled
+
+If disabling `task` via config doesn't work:
+1. **Change research question**: Not "does spawn improve accuracy" but "does model correctly judge when to spawn"
+2. **Use a larger model** with better tool-use fidelity
+3. **Accept spawn is always possible** and focus on measuring *when* model chooses to spawn
+
+## 9. Open Questions
+
+1. **Can task tool be disabled via config?** Test `tools: { task: false }` in opencode.json
+2. **Why does model ignore prompt constraints?** v4 says "don't spawn" but model spawns anyway
+3. **Why doesn't spawn improve accuracy?** v1 has highest spawn rate but same accuracy as v4
+4. **Does subagent quality matter more than spawn rate?** Subagent using internal knowledge instead of documents
+5. **v3_task_only_general still untested** — need 5-task run for completeness
 
 ---
 
