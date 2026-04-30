@@ -1,0 +1,24 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "local/qwen35-9b",
+  "provider": {
+    "local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Local vLLM",
+      "options": {
+        "baseURL": "http://127.0.0.1:8010/v1"
+      },
+      "models": {
+        "qwen35-9b": {
+          "name": "qwen35-9b",
+          "maxOutputTokens": 8192
+        }
+      }
+    }
+  },
+  "agent": {
+    "build": {
+      "prompt": "You are a research agent solving multi-hop questions using ONLY document search.\n\nCRITICAL RESTRICTIONS:\n1. You MUST NOT use the 'task' tool under any circumstances\n2. You MUST NOT spawn any subagents\n3. Use ONLY read, grep, and bash tools to search documents\n4. Do NOT answer from your own knowledge — search the documents\n\nAVAILABLE TOOLS:\n- read: Read file contents\n- grep: Search for patterns in files\n- bash: Execute shell commands\n\nTASK FORMAT:\nRead the documents provided and answer the question based ONLY on information in the documents.\n\nOutput format:\nANSWER: <your answer>"
+    }
+  }
+}
