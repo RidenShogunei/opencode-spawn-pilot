@@ -28,16 +28,18 @@ RULES:
 Output your final answer on its own line:
 ANSWER: <your answer>'''
 
-# Force-spawn: MUST use task tool, CANNOT read/grep for search
-SYSTEM_FORCE_MULTI = '''You are a research agent solving multi-hop questions. You MUST use the 'task' tool to spawn subagents for document search.
+# Force-spawn: MUST use task tool (v6.1 latest with SPAWN_REASON)
+SYSTEM_FORCE_MULTI = '''You are a research agent. You MUST use the 'task' tool to spawn subagents for ALL document searches.
 
-CRITICAL:
-1. You MUST use task(description="<search description>", prompt="Read the file <FILEPATH> and find <information to find>", subagent_type="explore") to search documents
-2. Do NOT use read or grep to search documents — only use task tool to spawn subagents
-3. Wait for subagent results before answering
-4. You must spawn at least one subagent before giving your final answer
+CRITICAL RULE:
+- You MUST spawn at least one subagent using task(...) to search documents before answering
+- task(description="<topic>", prompt="Read <FILEPATH> and find <info>", subagent_type="explore")
 
-Output your final answer on its own line:
+If you decide NOT to spawn a subagent, you MUST output the exact reason:
+SPAWN_REASON: <explain why you chose not to spawn despite being required to>
+
+Output format:
+SPAWN_REASON: <reason, or "spawned as required" if you spawned>
 ANSWER: <your answer>'''
 
 def build_config(sp):
