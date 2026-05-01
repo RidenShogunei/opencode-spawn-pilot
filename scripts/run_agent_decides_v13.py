@@ -2,9 +2,9 @@
 """
 OpenCode Spawn Pilot v13 — Agent-Decides mode on 55 tasks.
 Model decides whether to spawn subagents based on task complexity.
-Compares against existing Single (no spawn mention) and Force-Multi (must spawn) results.
+Uses PTY for proper TTY handling in background mode.
 """
-import subprocess, json, time, re
+import subprocess, json, time, re, os, pty, select
 from pathlib import Path
 
 OPENCODE = '/home/jinxu/.opencode/bin/opencode'
@@ -130,6 +130,61 @@ def is_correct(pred, answer, aliases=None):
     return False
 
 
+def run_opencode_with_pty(cmd, timeout=600):
+    """Run OpenCode with a pseudo-terminal to satisfy TTY requirements."""
+    master_fd, slave_fd = pty.openpty()
+    
+    proc = subprocess.Popen(
+        cmd,
+        shell=True,
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        close_fds=True,
+        cwd=str(Path.cwd())
+    )
+    os.close(slave_fd)
+    
+    output = b''
+    start_time = time.time()
+    
+    while proc.poll() is None and time.time() - start_time < timeout:
+        ready, _, _ = select.select([master_fd], [], [], 1.0)
+        if ready:
+            try:
+                data = os.read(master_fd, 65536)
+                if data:
+                    output += data
+            except (OSError, IOError):
+                break
+    
+    # Wait for process to finish
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    
+    # Drain remaining output
+    try:
+        while True:
+            ready, _, _ = select.select([master_fd], [], [], 0.5)
+            if ready:
+                data = os.read(master_fd, 65536)
+                if data:
+                    output += data
+                else:
+                    break
+            else:
+                break
+    except (OSError, IOError):
+        pass
+    
+    os.close(master_fd)
+    
+    return output.decode('utf-8', errors='replace')
+
+
 def run_agent_decides_task(task, run_id):
     """Run a single task in agent-decides mode."""
     task_id = task['id']
@@ -157,10 +212,6 @@ ANSWER: """
 
     full_prompt = f'{SYSTEM_AGENT_DECIDES}\n\n---\n\n{user_prompt}'
 
-    output_file = run_dir / 'opencode_raw_output.jsonl'
-    output_file_abs = output_file.absolute()
-    log_file = run_dir / 'opencode.log'
-
     # Write prompt to a file OUTSIDE the run_dir so the model can't read it
     prompt_file = OUTPUT_DIR / f'.prompt_{task_id}_{run_id}.txt'
     prompt_file.write_text(full_prompt, encoding='utf-8')
@@ -171,21 +222,16 @@ ANSWER: """
     )
 
     try:
-        with open(log_file, 'wb') as flog:
-            proc = subprocess.Popen(
-                cmd, shell=True, stdout=subprocess.PIPE, stderr=flog,
-                cwd=str(run_dir)
-            )
-            stdout, _ = proc.communicate(timeout=600)
-        output_text = stdout.decode('utf-8', errors='replace') if stdout else ''
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        output_text = ''
+        output_text = run_opencode_with_pty(cmd, timeout=600)
     except Exception as e:
         output_text = ''
     finally:
         if prompt_file.exists():
             prompt_file.unlink()
+
+    # Save raw output for debugging
+    raw_output_file = run_dir / 'opencode_raw_output.jsonl'
+    raw_output_file.write_text(output_text, encoding='utf-8')
 
     # Parse output: extract text and detect spawn events
     spawned = False
