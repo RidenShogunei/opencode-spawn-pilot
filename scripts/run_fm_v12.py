@@ -189,11 +189,15 @@ ANSWER: """
             elif entry.get('type') == 'tool_use':
                 state = entry.get('part', {}).get('state', {})
                 content = str(state.get('output', ''))
+                tool_name = entry.get('part', {}).get('tool', '')
+                if tool_name == 'task':
+                    spawned = True
+            elif entry.get('type') == 'tool_result':
+                content = str(entry.get('part', {}).get('result', ''))
+                tool_name = entry.get('part', {}).get('tool', '')
+                if tool_name == 'task':
+                    subagent_returned = True
             output_text_parsed += content + '\n'
-            if 'subagent' in str(content).lower() or 'task(' in str(content).lower():
-                spawned = True
-            if 'return' in str(content).lower() and ('result' in str(content).lower() or 'found' in str(content).lower()):
-                subagent_returned = True
         except:
             pass
 

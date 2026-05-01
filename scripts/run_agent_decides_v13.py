@@ -261,11 +261,6 @@ ANSWER: """
                 if tool_name == 'task':
                     subagent_returned = True
             output_text_parsed += content + '\n'
-            # Also check content text for spawn indicators
-            if 'subagent' in str(content).lower() or 'task(' in str(content).lower():
-                spawned = True
-            if 'return' in str(content).lower() and ('result' in str(content).lower() or 'found' in str(content).lower()):
-                subagent_returned = True
         except:
             pass
 
