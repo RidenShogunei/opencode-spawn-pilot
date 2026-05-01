@@ -44,6 +44,12 @@ python3 scripts/run_fm_v12.py
 python3 scripts/run_single_v12.py
 ```
 
+### 运行 Agent-Decides 实验（v13，新增）
+
+```bash
+python3 scripts/run_agent_decides_v13.py
+```
+
 ### 查看结果
 
 ```bash
@@ -52,6 +58,9 @@ cat outputs/opencode_spawn_pilot/comparison_v12/results_fm_v12.jsonl
 
 # Single v12 结果
 cat outputs/opencode_spawn_pilot/comparison_v12_single/results_single_v12.jsonl
+
+# Agent-Decides v13 结果（新增）
+cat outputs/opencode_spawn_pilot/comparison_v13_agent_decides/results_agent_decides_v13.jsonl
 ```
 
 ---
@@ -61,28 +70,34 @@ cat outputs/opencode_spawn_pilot/comparison_v12_single/results_single_v12.jsonl
 ```
 opencode-spawn-pilot/
 ├── scripts/
-│   ├── start_vllm.sh          # 启动 vLLM（GPU 1, port 8010）
-│   ├── run_fm_v12.py          # Force-Multi 实验脚本（当前版本）
-│   ├── run_single_v12.py      # Single 基线实验脚本（当前版本）
-│   └── expand_tasks_60.py     # 任务数据集扩展脚本
+│   ├── start_vllm.sh          # 启动 vLLM
+│   ├── run_fm_v12.py          # Force-Multi 实验
+│   ├── run_single_v12.py      # Single 基线实验
+│   ├── run_agent_decides_v13.py # Agent-Decides 实验（新增）
+│   └── expand_tasks_60.py     # 数据集扩展
 ├── outputs/opencode_spawn_pilot/
-│   ├── task_data_v2/           # 55 个任务 JSON（MuSiQue + HotpotQA）
-│   ├── comparison_v12/         # FM v12 完整结果（55 任务）
-│   └── comparison_v12_single/ # Single v12 部分结果（18/55 任务）
-├── SPEC.md                     # 详细实验规范和版本历史
-└── README.md                   # 本文档
+│   ├── task_data_v2/           # 55 个任务 JSON
+│   ├── comparison_v12/         # FM 完整结果
+│   ├── comparison_v12_single/  # Single 部分结果
+│   └── comparison_v13_agent_decides/ # Agent-Decides 结果（新增）
+├── SPEC.md                     # 详细规范 + 版本历史
+├── ENV.md                      # 环境状态
+└── README.md                   # 项目概览
 ```
 
 ---
 
 ## 实验设计
 
-### 两个模式对比
+### 三个模式对比
 
 | 模式 | 说明 | Spawn 行为 |
 |------|------|------------|
-| **Single** | 单 agent，直接搜索文档 | **禁止**使用 `task()` 工具 |
+| **Single** | 单 agent，直接搜索文档 | **不提及** `task()` 工具 |
+| **Agent-Decides（AD）** | 单 agent，**告知**可用 `task()` 工具，让模型自主决定 | **可选** spawn |
 | **Force-Multi（FM）** | 单 agent，但**强制**通过 `task()` spawn 子代理 | **必须** spawn |
+
+**核心假设**：之前"模型从不主动 spawn"的结论可能是 prompt 传递机制的问题（`--message` 参数 vs 配置文件），而非模型本身的能力限制。Agent-Decides 模式用于验证这一假设。
 
 ### 任务数据集
 
@@ -134,6 +149,18 @@ opencode-spawn-pilot/
 | Single | 18/55（跑中） | 12/18 (67%) fuzzy | 0% | — |
 
 > 注：FM fuzzy 20/55 和 Single 12/18 均为 fuzzy is_correct，不完全可比。
+
+### v13（新增 — Agent-Decides）
+
+| 模式 | 任务数 | 准确率 | Spawn 率 |
+|------|--------|--------|----------|
+| Agent-Decides | 待运行 | — | — |
+
+**预期对比**：
+- 如果 AD spawn 率 > 0%：说明之前"模型从不主动 spawn"是 prompt 传递问题，不是模型能力问题
+- 如果 AD spawn 率 ≈ 0%：说明即使正确告知工具，9B 模型仍不会自主 spawn
+- 如果 AD 准确率 ≈ Single：说明 spawn 决策不影响最终表现
+- 如果 AD 准确率 ≈ FM：说明模型能正确判断何时需要 spawn
 
 ### v11（有完整配对）
 

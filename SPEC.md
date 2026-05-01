@@ -1,8 +1,26 @@
 # OpenCode Spawn Pilot — Research Specification
 
-**Version: v12-clean**  
-**Status**: v12 FM complete (55 tasks), v12 Single partial (18/55 tasks)  
-**Summary**: v12 是第一个可用版本：修复了 Single 模式 return bug、建立了 fuzzy is_correct 评估标准。FM fuzzy 准确率 36%（strict 仅 13%），说明模型方向对但表述差异大。核心结论：9B 模型的推理瓶颈才是关键，spawn 机制本身不是问题。
+**Version: v13 — Agent-Decides mode added**
+**Status**: v12 FM complete (55 tasks), v12 Single partial (18/55 tasks), v13 AD pending
+**Summary**: v13 adds a third experimental condition: Agent-Decides (AD), where the model is informed about the task tool but chooses whether to spawn. This tests the hypothesis that previous "0% voluntary spawn" findings were due to prompt delivery issues, not model capability.
+
+---
+
+## 0. 实验设计（三类对比）
+
+| 模式 | Prompt 策略 | Spawn 行为 | 研究目的 |
+|------|------------|-----------|---------|
+| **Single** | 不提及 task 工具 | 模型不知道可以 spawn | 纯单 agent 基线 |
+| **Agent-Decides (AD)** | 告知 task 工具可用，提供使用场景指导 | 模型自主决定 | 测试模型是否有 spawn 意愿 |
+| **Force-Multi (FM)** | 强制必须使用 task 工具 | 必须 spawn | 测试 spawn 的上限效果 |
+
+**核心假设**：之前"模型从不主动 spawn"（v5.0: 22 任务 0 spawn）的结论，可能是因为 prompt 没有正确传递给模型（`opencode run --format json` 忽略配置文件），而非模型本身不会判断。
+
+**验证逻辑**：
+- 如果 AD spawn 率 > 0% → 之前的"0%"是 prompt 传递问题 ✓
+- 如果 AD spawn 率 ≈ 0% → 9B 模型确实不会自主 spawn，需要强制
+- 如果 AD 准确率 ≈ Single → spawn 决策不影响结果
+- 如果 AD 准确率 ≈ FM → 模型能正确判断何时 spawn 有帮助
 
 ---
 
@@ -111,9 +129,9 @@ Model:     local/qwen35-9b
 
 ---
 
-## 5. 两个模式的提示词
+## 5. 三个模式的提示词
 
-### Single（禁止 spawn）
+### Single（不提及 spawn）
 
 ```
 You are a research agent answering multi-hop questions by searching through documents.
@@ -128,6 +146,42 @@ RULES:
 Output your final answer on its own line:
 ANSWER: <your answer>
 ```
+
+### Agent-Decides（告知工具，自主决定）
+
+```
+You are a research agent answering multi-hop questions by searching through documents.
+
+Your task: Read the provided documents, find the information needed to answer the question, and output your answer.
+
+You have access to two approaches for searching documents:
+1. Direct search: Use read and grep tools to search documents yourself
+2. Delegation: Use the 'task' tool to spawn a research subagent that searches on your behalf
+
+WHEN TO DELEGATE (use task tool):
+- When the question requires finding MULTIPLE pieces of information from different parts of the documents
+- When you would need to run several separate searches and cross-reference results
+- When the documents are large and parallel search would be more efficient
+
+WHEN TO SEARCH DIRECTLY (use read/grep):
+- When the question can be answered with a single search
+- When you can quickly locate the answer yourself
+
+DELEGATION FORMAT:
+  task(description="<short topic>", prompt="Read <FILEPATH> and find <INFO>", subagent_type="general")
+
+After any subagent completes, review its findings and give your final answer.
+
+Output your final answer on its own line:
+ANSWER: <your answer>
+```
+
+**设计原则**：
+1. 不禁止 read/grep（模型需要这些工具）
+2. 解释 WHEN，不只是 HOW（模型用成本收益分析）
+3. 承认直接搜索是有效的（减少认知失调）
+4. 让模型自己决定（模型的内部工具选择启发式往往是正确的）
+5. 框定为战略选择（"有助手的主管" > "必须使用子代理"）
 
 ### Force-Multi（必须 spawn）
 
@@ -212,13 +266,15 @@ python3 scripts/expand_tasks_60.py
 
 | 文件/目录 | 说明 |
 |----------|------|
-| `scripts/run_fm_v12.py` | FM 实验脚本（当前版本） |
-| `scripts/run_single_v12.py` | Single 实验脚本（当前版本） |
+| `scripts/run_fm_v12.py` | FM 实验脚本 |
+| `scripts/run_single_v12.py` | Single 实验脚本 |
+| `scripts/run_agent_decides_v13.py` | Agent-Decides 实验脚本（新增） |
 | `scripts/expand_tasks_60.py` | 任务数据集扩展脚本 |
 | `scripts/start_vllm.sh` | vLLM 启动脚本 |
 | `outputs/.../task_data_v2/` | 55 个任务 JSON |
 | `outputs/.../comparison_v12/` | FM v12 结果（55 任务） |
 | `outputs/.../comparison_v12_single/` | Single v12 部分结果（18/55） |
+| `outputs/.../comparison_v13_agent_decides/` | Agent-Decides v13 结果（待运行） |
 | `README.md` | 项目概览 |
 | `SPEC.md` | 本文档 |
 
@@ -227,6 +283,8 @@ python3 scripts/expand_tasks_60.py
 ## 10. 待解决问题
 
 1. **补全 Single v12**：还需要 37 个任务跑完才能做完整配对对比
-2. **扩大样本量**：55 任务仍不足以做统计显著性检验，建议 100-200 任务
-3. **更大模型对比**：9B 推理瓶颈明显，14B/32B 是否能解决？
-4. **Error analysis**：深入分析 fuzzy 判断中哪些是真错误、哪些是表述差异
+2. **运行 Agent-Decides v13**：验证"模型从不主动 spawn"是否为伪命题
+3. **三类对比分析**：Single vs Agent-Decides vs Force-Multi 的完整配对对比
+4. **扩大样本量**：55 任务仍不足以做统计显著性检验，建议 100-200 任务
+5. **更大模型对比**：9B 推理瓶颈明显，14B/32B 是否能解决？
+6. **Error analysis**：深入分析 fuzzy 判断中哪些是真错误、哪些是表述差异
