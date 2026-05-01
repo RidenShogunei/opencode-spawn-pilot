@@ -166,9 +166,8 @@ ANSWER: """
     prompt_file.write_text(full_prompt, encoding='utf-8')
 
     cmd = (
-        f'script -q -c '
-        f'"{OPENCODE} run --model {MODEL} --format json --title {task_id} --message @/{prompt_file.absolute()}" '
-        f'{output_file_abs}'
+        f'{OPENCODE} run --model {MODEL} --format json --title {task_id} '
+        f'--message @/{prompt_file.absolute()}'
     )
 
     try:
@@ -177,8 +176,8 @@ ANSWER: """
                 cmd, shell=True, stdout=subprocess.PIPE, stderr=flog,
                 cwd=str(run_dir)
             )
-            _, _ = proc.communicate(timeout=600)
-        output_text = output_file.read_text(errors='replace') if output_file.exists() else ''
+            stdout, _ = proc.communicate(timeout=600)
+        output_text = stdout.decode('utf-8', errors='replace') if stdout else ''
     except subprocess.TimeoutExpired:
         proc.kill()
         output_text = ''
