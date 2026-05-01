@@ -97,43 +97,28 @@ Find the answer using the read and grep tools.
 ANSWER: """
 
     full_prompt = f'{SYSTEM_SINGLE}\n\n---\n\n{user_prompt}'
-    prompt_file = run_dir / '.prompt.txt'
-    prompt_file.write_text(full_prompt, encoding='utf-8')
-
-    output_file = run_dir / 'opencode_raw_output.jsonl'
     log_file = run_dir / 'opencode.log'
 
     cmd = [
         'script', '-q', '-c',
-        f'{OPENCODE} run --model {MODEL} --message "$(cat {prompt_file})" --no-input --no-auto-continue --output-format jsonl --output {output_file}',
-        '/bin/bash'
+        f'{OPENCODE} run --model {MODEL} --format json --title {task_id} {json.dumps(full_prompt)} 2>&1',
+        '/dev/null'
     ]
 
     try:
-        result = subprocess.run(
-            ' '.join(cmd),
-            shell=True, capture_output=True, timeout=600,
-            cwd=str(run_dir)
-        )
-        log_file.write_text(result.stderr.decode('utf-8', errors='replace'), encoding='utf-8')
+        with open(log_file, 'wb') as flog:
+            proc = subprocess.Popen(
+                ' '.join(cmd),
+                shell=True, stdout=subprocess.PIPE, stderr=flog,
+                cwd=str(run_dir)
+            )
+            stdout, _ = proc.communicate(timeout=600)
+        output_text = stdout.decode('utf-8', errors='replace')
     except subprocess.TimeoutExpired:
+        proc.kill()
         return {'task_id': task_id, 'correct': False, 'predicted': 'TIMEOUT', 'answer': answer, 'error': 'timeout'}
     except Exception as e:
         return {'task_id': task_id, 'correct': False, 'predicted': f'ERROR: {e}', 'answer': answer, 'error': str(e)}
-
-    output_text = ''
-    if output_file.exists():
-        with open(output_file) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                    content = entry.get('content', entry.get('text', ''))
-                    output_text += str(content)
-                except:
-                    pass
 
     predicted = extract_answer(output_text)
     correct = is_correct(predicted, answer, aliases)
