@@ -30,13 +30,10 @@ SYSTEM_FORCE_MULTI = '''You are a research agent. You MUST use the 'task' tool t
 
 CRITICAL RULE:
 - You MUST spawn at least one subagent using task(...) to search documents before answering
-- task(description="<topic>", prompt="Read <FILEPATH> and find <info>", subagent_type="explore")
+- task(description="<topic>", prompt="Read <FILEPATH> and find <info>", subagent_type="general")
 
-If you decide NOT to spawn a subagent, you MUST output the exact reason:
-SPAWN_REASON: <explain why you chose not to spawn despite being required to>
+After the subagent completes, synthesize the findings and give your answer.
 
-Output format:
-SPAWN_REASON: <reason, or "spawned as required" if you spawned>
 ANSWER: <your answer>'''
 
 def build_config(sp):
@@ -71,21 +68,17 @@ def run_single_task(mode, task, run_id):
     docs_path = run_dir / 'documents.txt'
     docs_path.write_text(build_docs(task))
 
+    system_prompt = SYSTEM_SINGLE if mode == 'single' else SYSTEM_FORCE_MULTI
     user_prompt = f'Use the documents provided in {docs_path}.\n\nQuestion: {question}\n\nSearch the documents to find the answer. Output your final answer on its own line:\nANSWER: <your answer>'
-
-    config = build_config(SYSTEM_SINGLE if mode == 'single' else SYSTEM_FORCE_MULTI)
-    CONFIG_FILE.write_text(json.dumps(config, indent=2))
+    # 合并 system + user 作为完整消息（key insight: opencode run 从 command line arg 读取，不从 stdin 或 config 读取 system prompt）
+    full_prompt = f'{system_prompt}\n\n---\n\n{user_prompt}'
 
     out_path = run_dir / 'opencode_raw_output.jsonl'
     log_path = run_dir / 'opencode.log'
 
-    # 将 prompt 写入临时文件，opencode 命令通过 -- 从 stdin 读取
-    prompt_path = run_dir / '.prompt.txt'
-    prompt_path.write_text(user_prompt)
-
-    # script -c 包装，opencode -- 从 stdin 读取 prompt
+    # script -q -c 包装，整个 prompt 作为 JSON 编码的命令行参数（不用 stdin，不用 config 文件）
     cmd = ['script', '-q', '-c',
-           f'{OPENCODE} run --agent build --model {MODEL} --format json --title musique-{task_id} < {shlex.quote(str(prompt_path))}',
+           f'{OPENCODE} run --agent build --model {MODEL} --format json --title musique-{task_id} {json.dumps(full_prompt)} 2>&1',
            '/dev/null']
 
     start = time.time()
@@ -108,9 +101,9 @@ def run_single_task(mode, task, run_id):
                 obj = json.loads(line)
                 if obj.get('type') == 'text':
                     text = obj.get('part', {}).get('text', '')
-                    # 容忍 ANSWER/ANNWER/ANSWERA 等常见打字错误
+                    # 容忍 ANSWER/ANNWER/ANSWERA 等常见打字错误，清理尾部引号/空格
                     m = re.search(r'AN[NS]WER[A-Z]*:\s*(.+)', text, re.MULTILINE | re.IGNORECASE)
-                    if m: predicted = m.group(1).strip()
+                    if m: predicted = m.group(1).strip().strip('"').strip()
                 elif obj.get('type') == 'tool_use':
                     tool = obj.get('part', {}).get('tool', '')
                     if tool == 'task':
