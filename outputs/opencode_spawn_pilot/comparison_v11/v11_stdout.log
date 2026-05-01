@@ -1,0 +1,84 @@
+Total tasks: 30
+Output dir: /home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot/comparison_v11
+Results file: /home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot/comparison_v11/results_fm_v11.jsonl
+Run ID: v11-1777637842
+============================================================
+[1/30] hotpot_5a722a6855429971e9dc9320 ... ✓ [spawn×1][ret]  (27.6s)
+[2/30] hotpot_5a85a37d5542997175ce1fe5 ... ✗ [spawn×1][ret]  (28.9s)
+    Predicted: 2
+    Answer:    two termini
+[3/30] hotpot_5a87bd4e5542996432c57279 ... ✗ [spawn×1][ret]  (27.6s)
+    Predicted: Reverend Lovejoy (Timothy "Tim" Lovejoy)
+    Answer:    Ned Flanders
+[4/30] hotpot_5a8bf0835542995d1e6f146b ... ✓ [spawn×1][ret]  (22.0s)
+[5/30] hotpot_5adfa22655429942ec259ac4 ... ✓ [spawn×2][ret]  (48.3s)
+[6/30] hotpot_5adfff0755429925eb1afbce ... ✓ [spawn×1][ret]  (93.7s)
+[7/30] large_2hop__591435_51329 ... ✓ [spawn×1][ret]  (89.2s)
+[8/30] large_2hop__736167_74735 ... ✓ [spawn×1][ret]  (40.5s)
+[9/30] large_3hop1__17192_78396_157843 ... ✗ [spawn×3][ret]  (176.0s)
+    Predicted: **1852**. Britain controlled Palestine when Israel was founded in 1948, and Brit
+    Answer:    1853
+[10/30] large_3hop1__862117_792411_51423 ... ✓ [spawn×3]  (152.8s)
+[11/30] large_4hop1__28352_53706_795904_580996 ... ✗ [spawn×1][ret]  (137.5s)
+    Predicted: No information about San Francisco's borders is available in the documents**
+    Answer:    Rio Linda
+[12/30] large_4hop1__726675_508773_85832_745702 ... ✓ [spawn×5][ret]  (167.6s)
+[13/30] musique_2hop__252521_80650 ... ✗ [spawn×1][ret]  (58.4s)
+    Predicted: The question asks: "Who played the character in the Santa Clause 3 that has a se
+    Answer:    Martin Short
+[14/30] musique_2hop__476927_31270 ... ✗ [spawn×1][ret]  (33.0s)
+    Predicted: This information is not available in the provided documents. Only Hod Lisenbee's
+    Answer:    45
+[15/30] musique_2hop__557496_57594 ... ✗ [spawn×2][ret]  (79.4s)
+    Predicted: The provided documents do not contain information about what gun Amy Madigan's s
+    Answer:    LeMat revolver
+[16/30] musique_2hop__623501_297043 ... ✓ [spawn×1]  (32.2s)
+[17/30] musique_2hop__628752_538661 ... ✓ [spawn×1][ret]  (29.2s)
+[18/30] musique_2hop__642686_7292 ... ✓ [spawn×1][ret]  (42.8s)
+[19/30] musique_2hop__657913_88628 ... ✗ [NO_SPAWN] [timeout] (300s)
+[20/30] musique_2hop__825727_584042 ... ✗ [spawn×1][ret]  (29.0s)
+    Predicted: K League Challenge (K2 League)
+    Answer:    K-League
+[21/30] musique_3hop1__135794_87694_64412 ... ✓ [spawn×2][ret]  (47.4s)
+[22/30] musique_3hop1__498954_160713_77246 ... ✗ [spawn×2][ret]  (99.6s)
+    Predicted: **
+    Answer:    the country of India
+[23/30] musique_3hop1__791757_15840_36014 ... ✗ [spawn×1][ret]  (58.6s)
+    Predicted: 5 games per year
+    Answer:    five
+[24/30] musique_3hop2__304722_667199_63959 ... ✗ [spawn×2][ret]  (167.4s)
+    Predicted: The documents do not contain information about when the team Malcolm Briggs was 
+    Answer:    1 December 2010
+[25/30] musique_3hop2__87184_90327_76291 ... ✗ [spawn×1][ret]  (46.7s)
+    Predicted: **
+    Answer:    January 2015
+[26/30] musique_4hop1__199881_378185_282674_759393 ... ✓ [spawn×1][ret]  (49.1s)
+[27/30] musique_4hop1__399219_765799_282674_759393 ... ✓ [spawn×2][ret]  (150.3s)
+[28/30] musique_4hop2__5206_14670_8987_8529 ... ✗ [spawn×3]  (101.6s)
+    Predicted: 1943 to 1992
+    Answer:    1943–1992
+[29/30] musique_4hop3__193820_466199_128875_72134 ... ✓ [spawn×1][ret]  (82.2s)
+[30/30] musique_4hop3__193820_466199_695123_72134 ... ✓ [spawn×2][ret]  (110.3s)
+
+=== SUMMARY ===
+Overall:  16/30 correct (53%) | spawns=46 | returned=26 | no_spawn=1
+  hotpot: 4/6 (67%)
+  2hop: 5/10 (50%)
+  3hop: 2/7 (29%)
+  4hop: 5/7 (71%)
+
+Failed tasks (14):
+  hotpot_5a85a37d5542997175ce1fe5: predicted=2 answer=two termini
+  hotpot_5a87bd4e5542996432c57279: predicted=Reverend Lovejoy (Timothy "Tim" Lovejoy) answer=Ned Flanders
+  large_3hop1__17192_78396_157843: predicted=**1852**. Britain controlled Palestine when Israel answer=1853
+  large_4hop1__28352_53706_795904_580996: predicted=No information about San Francisco's borders is av answer=Rio Linda
+  musique_2hop__252521_80650: predicted=The question asks: "Who played the character in th answer=Martin Short
+  musique_2hop__476927_31270: predicted=This information is not available in the provided  answer=45
+  musique_2hop__557496_57594: predicted=The provided documents do not contain information  answer=LeMat revolver
+Traceback (most recent call last):
+  File "/home/jinxu/opencode-spawn-pilot/scripts/run_fm_v11.py", line 228, in <module>
+    main()
+  File "/home/jinxu/opencode-spawn-pilot/scripts/run_fm_v11.py", line 224, in main
+    print(f'  {r["task_id"]}: predicted={r.get("predicted","N/A")[:50]} answer={r["answer"][:50]}')
+                                         ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+TypeError: 'NoneType' object is not subscriptable
