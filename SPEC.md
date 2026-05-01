@@ -55,6 +55,25 @@ v5.0 (22 tasks, 3 tiers, 0 spawns): Model never voluntarily spawned even for 100
 
 **v10 prompt**: `subagent_type="general"` + "After the subagent completes, synthesize the findings and give your answer." No SPAWN_REASON requirement.
 
+### v11 Force-Multi (30 tasks, expanded dataset)
+
+| Mode | Accuracy | Spawn Rate | Return Rate |
+|------|----------|------------|------------|
+| Force-Multi v11 | 16/30 (53%) | 29/30 (97%) | 26/30 (87%) |
+
+**Per-difficulty breakdown:**
+
+| Difficulty | Tasks | Correct | Rate |
+|-----------|-------|---------|------|
+| hotpot | 6 | 4 | 67% |
+| 4-hop | 7 | 5 | 71% |
+| 2-hop | 10 | 5 | 50% |
+| 3-hop | 7 | 2 | 29% |
+
+**Dataset**: 30 tasks total — 6 original hotpot + 6 original large + 18 newly sampled from MuSiQue dev (8×2hop, 3×3hop1, 2×3hop2, 2×4hop1, 2×4hop3, 1×4hop2).
+
+**Key observation**: 4-hop tasks (71%) outperformed 3-hop (29%) on this sample — likely because the new 4-hop tasks tend toward factual lookup rather than complex chaining.
+
 ### Failure Analysis (v10, 5 wrong)
 | Task | Problem |
 |------|---------|
@@ -79,22 +98,40 @@ Startup: `bash scripts/start_vllm.sh`
 
 ---
 
-## 4. Task Set (12 tasks, task_data_v2/)
+## 4. Task Set (30 tasks, task_data_v2/)
 
-| Task ID | Question (truncated) | Difficulty |
-|---------|---------------------|------------|
-| hotpot_5a722a68 | Anna Leonidovna Kovalchuk law festival prize | 2-hop |
-| hotpot_5a85a37d | train C&M subdivision termini | 2-hop |
-| hotpot_5a87bd4e | minister at First Church Springfield | 2-hop |
-| hotpot_5a8bf083 | mockingbird mascot UT Chattanooga | 2-hop |
-| hotpot_5adfa226 | BBC HyperNormalisation staff count | 2-hop |
-| hotpot_5adfff075 | 25 miles south of Groom Lake | 2-hop |
-| large_2hop__591435 | Oscar for Knock on Any Door cast | 2-hop |
-| large_2hop__736167 | Paul McCartney song for Cynthia's kid | 2-hop |
-| large_3hop1__17192 | Lower Burma annexation date | 3-hop |
-| large_3hop1__862117 | castle in birthplace of Speckless Sky performer | 3-hop |
-| large_4hop1__28352 | shares border with Rio Linda | 4-hop |
-| large_4hop1__726675 | child of Italian navigator | 4-hop |
+| Task ID | Question (truncated) | Difficulty | Source |
+|---------|---------------------|------------|--------|
+| hotpot_5a722a68 | Anna Leonidovna Kovalchuk law festival prize | 2-hop | original |
+| hotpot_5a85a37d | train C&M subdivision termini | 2-hop | original |
+| hotpot_5a87bd4e | minister at First Church Springfield | 2-hop | original |
+| hotpot_5a8bf083 | mockingbird mascot UT Chattanooga | 2-hop | original |
+| hotpot_5adfa226 | BBC HyperNormalisation staff count | 2-hop | original |
+| hotpot_5adfff075 | 25 miles south of Groom Lake | 2-hop | original |
+| large_2hop__591435 | Oscar for Knock on Any Door cast | 2-hop | original |
+| large_2hop__736167 | Paul McCartney song for Cynthia's kid | 2-hop | original |
+| large_3hop1__17192 | Lower Burma annexation date | 3-hop | original |
+| large_3hop1__862117 | castle in birthplace of Speckless Sky performer | 3-hop | original |
+| large_4hop1__28352 | shares border with Rio Linda | 4-hop | original |
+| large_4hop1__726675 | child of Italian navigator | 4-hop | original |
+| musique_2hop__623501 | Lostock Dam river | 2-hop | MuSiQue dev |
+| musique_2hop__628752 | headquarters of In the Shadow publisher | 2-hop | MuSiQue dev |
+| musique_2hop__642686 | Kenny G and Hello Tomorrow performer | 2-hop | MuSiQue dev |
+| musique_2hop__557496 | gun used by Amy Madigan's spouse | 2-hop | MuSiQue dev |
+| musique_2hop__825727 | league of Maycon Carvalho team | 2-hop | MuSiQue dev |
+| musique_2hop__252521 | character in Santa Clause 3 | 2-hop | MuSiQue dev |
+| musique_2hop__657913 | who producer of Big Jim McLain played in True Grit | 2-hop | MuSiQue dev |
+| musique_2hop__476927 | distance Hod Lisenbee death TN from Nashville | 2-hop | MuSiQue dev |
+| musique_3hop1__791757 | Knight Rider console max games/year | 3-hop | MuSiQue dev |
+| musique_3hop1__135794 | city where Basilica named after saint is | 3-hop | MuSiQue dev |
+| musique_3hop1__498954 | majority rule word meaning | 3-hop | MuSiQue dev |
+| musique_3hop2__304722 | last time Malcolm Briggs team | 3-hop | MuSiQue dev |
+| musique_3hop2__87184 | last time majority party in House | 3-hop | MuSiQue dev |
+| musique_4hop1__399219 | seat of county sharing border with Miller Electric county | 4-hop | MuSiQue dev |
+| musique_4hop1__199881 | seat of county sharing border with Miller Electric county | 4-hop | MuSiQue dev |
+| musique_4hop3__193820 | when WLUJ town became capitol | 4-hop | MuSiQue dev |
+| musique_4hop3__193820 | when WIZE town became capitol | 4-hop | MuSiQue dev |
+| musique_4hop2__5206 | when Slavs used in national anthem | 4-hop | MuSiQue dev |
 
 ---
 
@@ -159,13 +196,15 @@ python3 scripts/run_fm_v10.py
 
 | File/Dir | Description |
 |----------|-------------|
-| `scripts/run_v6_parallel.py` | Main harness: task loading, run_single_task(), prompt delivery, JSON parsing |
-| `scripts/run_fm_v10.py` | Force-multi batch launcher (uses run_v6_parallel) |
+| `scripts/run_v6_parallel.py` | Core harness: task loading, run_single_task(), prompt delivery via json.dumps arg, JSON parsing |
+| `scripts/run_fm_v10.py` | Force-multi batch launcher for v10 (12 tasks) |
+| `scripts/run_fm_v11.py` | Force-multi batch launcher for v11 (30 tasks) |
+| `scripts/expand_tasks.py` | Dataset expansion: sample from MuSiQue dev, write task JSON files |
 | `scripts/start_vllm.sh` | vLLM startup script |
-| `outputs/.../task_data_v2/` | 12 task JSON files |
-| `outputs/.../comparison_v6_parallel/results_v6_parallel.jsonl` | v6.1 paired results (single + force-multi, 10 tasks) |
-| `outputs/.../comparison_v10/results_fm_v10.jsonl` | v10 force-multi results (12 tasks) |
-| `outputs/.../comparison/` | Legacy results (v3/v4, ignore) |
+| `outputs/.../task_data_v2/` | 30 task JSON files (original 12 + 18 new MuSiQue) |
+| `outputs/.../comparison_v6_parallel/results_v6_parallel.jsonl` | v6.1 paired results (broken: prompt bugs + lost single data) |
+| `outputs/.../comparison_v10/results_fm_v10.jsonl` | v10 force-multi results (12 tasks, 58%) |
+| `outputs/.../comparison_v11/results_fm_v11.jsonl` | v11 force-multi results (30 tasks, 53%) |
 
 ---
 
