@@ -1,9 +1,0 @@
-Model: local/qwen35-9b  OpenCode: /home/jinxu/.opencode/bin/opencode
-Data: 10 tasks
-
-==================================================
-Mode: SINGLE
-==================================================
-Config written to /home/jinxu/.config/opencode/opencode.json
-[1/10] 2hop__623501_297043 ... TIMEOUT (300s)
-[2/10] 2hop__628752_538661 ... 

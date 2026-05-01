@@ -1,8 +1,9 @@
-# OpenCode Spawn Pilot — Activation Probe Report Template
+# OpenCode Spawn Pilot — Experiment Report
 
-> 报告时间：YYYY-MM-DD
+> 报告时间：2026-05-01
 > 模型：Qwen3.5-9B + vLLM @ localhost:8010
 > 框架：OpenCode 1.3.6
+> 任务集：MuSiQue + HotpotQA 子集（12 tasks，task_data_v2/）
 
 ---
 
@@ -10,117 +11,96 @@
 
 | 项目 | 值 |
 |------|-----|
-| 总 runs | 30（10 tasks × 3 modes） |
-| M0（spawn_closed） | 10 runs |
-| M1（spawn_affordance） | 10 runs |
-| M2（spawn_decision_required） | 10 runs |
+| 总任务数 | 12 |
+| v6.1 配对实验 | 10 tasks，both single + force_multi |
+| v10 force-multi | 12 tasks，force_multi only |
+| 模型 | Qwen3.5-9B（Qwen3.5-14B 已删除） |
 
 ---
 
 ## 2. 核心发现
 
-> **摘要**：M0/M1/M2 各模式准确率、spawn 行为、echo 行为。
+### Finding 1: `opencode run` 不读取配置文件
+`opencode run --format json` 完全忽略 `~/.config/opencode/opencode.json`。只有 `--message` 参数能送达 prompt。
+
+**影响**：v6.1 之前所有批量实验（0% spawn）均为 broken experiment——prompt 从未送达。
+
+### Finding 2: 修复后 Spawn 率达 92%
+正确送达 prompt 后，force_multi 模式 11/12 任务 spawn 了 subagent。
+
+### Finding 3: Spawn 只解决搜索，不解决推理
+即使 subagent 找到了正确信息，Build Agent 在链式推理任务上仍然失败。
+
+### Finding 4: 模型从不主动 spawn
+v5.0（22 tasks，3 tiers）：0 spawn。模型认为 spawn 不必要。
 
 ---
 
-## 3. 指标详解
+## 3. 实验结果
 
-### 3.1 准确率（accuracy_by_mode）
+### 3.1 v6.1 配对实验（10 tasks，同任务两种模式）
 
-| 模式 | N | 准确率 | 正确答案数 |
-|------|---|--------|-----------|
-| M0_spawn_closed | 10 | X% | X/10 |
-| M1_spawn_affordance | 10 | X% | X/10 |
-| M2_spawn_decision_required | 10 | X% | X/10 |
+| 模式 | 准确率 | Spawn 率 |
+|------|--------|----------|
+| **Single**（只许 read/grep） | 4/10（40%） | 0% |
+| **Force-Multi**（强制 spawn） | 7/10（70%） | 6/10 |
 
-### 3.2 Spawn 行为（actual_spawn_count from wrapper log）
+**净提升**：+30%（spawn 帮助了 3 个任务：B🍊Staff 35,402、Rachel Nevada、Maria Shvetsova）
 
-| 模式 | 总 spawn 次数 | spawn ≥1 的任务数 | 平均 spawn 次数 |
-|------|-------------|-----------------|---------------|
-| M0_spawn_closed | 0 | 0/10 | 0.0 |
-| M1_spawn_affordance | X | X/10 | X.X |
-| M2_spawn_decision_required | X | X/10 | X.X |
+### 3.2 v10 Force-Multi（12 tasks，final prompt）
 
-### 3.3 Echo 检测（echoed_instructions）
+| 模式 | 准确率 | Spawn 率 |
+|------|--------|----------|
+| Force-Multi v10 | 7/12（58%） | 11/12（92%） |
 
-| 模式 | Echoed 次数 | 说明 |
-|------|-----------|------|
-| M0_spawn_closed | N/A | 无 spawn affordance |
-| M1_spawn_affordance | X/10 | 模型把 spawn 提示文本 Echo 出来 |
-| M2_spawn_decision_required | X/10 | 模型把 SPAWN_DECISION 格式 Echo 出来 |
+### 3.3 失败分析（v10，5 个错误）
 
-### 3.4 M2 决策分析（spawn_decision_yes_rate）
-
-| 指标 | 值 |
-|------|---|
-| SPAWN_DECISION: yes | X/10 |
-| SPAWN_DECISION: no | X/10 |
-| Malformed（无 SPAWN_DECISION） | X/10 |
-
-**decision_call_consistency**：X/Y（M2 中决策和实际调用一致的比例）
-
-### 3.5 invalid_spawn_attempts
-
-| 任务 | decision | actual_spawn | 说明 |
-|------|----------|-------------|------|
-| task_id | yes | 0 | 说了要 spawn 但没调用 wrapper |
-| ... | ... | ... | ... |
-
-### 3.6 spawn_call_rate_by_hop
-
-| Hop | M0 准确率 | M1 spawn 率 | M1 准确率 | M2 spawn 率 | M2 准确率 |
-|-----|---------|------------|---------|------------|---------|
-| 2-hop（3题） | X% | X/X | X% | X/X | X% |
-| 3-hop（3题） | X% | X/X | X% | X/X | X% |
-| 4-hop（4题） | X% | X/X | X% | X/X | X% |
+| 任务 | 错误类型 | 说明 |
+|------|----------|------|
+| train termini | 格式/常识 | 模型输出 `3`，标准答案是 `two` |
+| large_2hop Knock | 推理错误 | 问演员成就的影片，模型答了影片名 |
+| large_3hop1 1853 | 推理错误 | Subagent 找到正确信息，Build Agent 选错了国家 |
+| large_3hop1 Casa Loma | 搜索失败 | Birthplace 信息缺失 |
+| large_4hop1 Rio Linda | TIMEOUT | 任务过于复杂，300s 内未完成 |
 
 ---
 
-## 4. 关键观察
+## 4. 结论
 
-### 4.1 M1 问题诊断：affordance 为什么不转化为 action？
+| 结论 | 证据 |
+|------|------|
+| 模型可以被诱导 spawn | 92% spawn 率 |
+| Spawn 对直接可提取任务有帮助 | BBC Staff、Rachel Nevada |
+| Spawn 无法解决链式推理 | 3-hop、4-hop 任务仍然失败 |
+| 真正瓶颈是 9B 推理能力 | 不是搜索能力 |
 
-- 模型是否把 spawn 提示 Echo 出来但不执行？
-- 模型是否自己判断"不需要 spawn"？
-- 模型是否知道如何调用 wrapper script？
-
-### 4.2 M2 问题诊断：强制决策是否解锁 spawn？
-
-- M2 spawn 率 vs M1 spawn 率
-- 如果 M2 spawn 率 > M1 → 决策格式是瓶颈
-- 如果 M2 spawn 率 = M1 → 决策本身不是问题
-
-### 4.3 整合问题
-
-- 即使 spawn 了，最终答案是否引用了 subagent 的输出？
-- spawn 对准确率的贡献是否独立于 mode？
+**下一步问题**：更大模型（14B/32B）能否消除推理瓶颈？
 
 ---
 
-## 5. 结论
+## 5. 数据附录
 
-> **核心问题**：Qwen3.5-9B 不会主动 spawn（因为没有这个行为习惯），还是它不知道如何将文本 affordance 转化为可执行动作？
+### 5.1 关键结果文件
 
-| 假说 | 证据 | 结论 |
-|------|------|------|
-| 模型不会主动 spawn | M1 spawn 率 ≈ 0 | 待验证 |
-| 模型不知道如何执行 | M2 spawn 率 > M1 | 待验证 |
-| 模型 spawn 了但不整合 | spawn 了仍然错 | 待验证 |
+| 文件 | 内容 |
+|------|------|
+| `outputs/.../comparison_v6_parallel/results_v6_parallel.jsonl` | v6.1 配对结果（single + force_multi） |
+| `outputs/.../comparison_v10/results_fm_v10.jsonl` | v10 force-multi 结果（12 tasks） |
+| `outputs/.../task_data_v2/` | 12 个任务 JSON 文件 |
 
----
+### 5.2 任务详情
 
-## 6. 数据附录
-
-### 6.1 原始 runs.jsonl 路径
-`outputs/opencode_spawn_pilot/runs.jsonl`
-
-### 6.2 Spawn 事件日志路径
-`outputs/opencode_spawn_pilot/spawn_events/spawn_events.jsonl`
-
-### 6.3 per-task 结果
-
-| task_id | mode | success | actual_spawn | echoed | spawn_decision | pred | gold |
-|---------|------|---------|--------------|--------|----------------|------|------|
-| ... | M0 | ✅/❌ | 0 | N/A | N/A | ... | ... |
-| ... | M1 | ✅/❌ | X | ✅/❌ | N/A | ... | ... |
-| ... | M2 | ✅/❌ | X | ✅/❌ | yes/no | ... | ... |
+| task_id | 难度 | 标准答案 | Single | Force-Multi | Spawn |
+|---------|------|---------|--------|-------------|-------|
+| hotpot_5a722a68 | 2-hop | Chief Detective Maria Shvetsova | ✗ | ✓ | 1 |
+| hotpot_5a85a37d | 2-hop | two termini | ✗ | ✗ | 1 |
+| hotpot_5a87bd4e | 2-hop | Ned Flanders | ✓ | ✓ | 1 |
+| hotpot_5a8bf083 | 2-hop | northern mockingbird | ✓ | ✓ | 1 |
+| hotpot_5adfa226 | 2-hop | 35,402 | ✗ | ✓ | 2 |
+| hotpot_5adfff075 | 2-hop | Rachel, Nevada | ✗ | ✓ | 2 |
+| large_2hop__591435 | 2-hop | The African Queen | ✓ | ✓ | 0 |
+| large_2hop__736167 | 2-hop | ``Hey Jude '' | ✓ | ✓ | 0 |
+| large_3hop1__17192 | 3-hop | 1853 | ✗ | ✗ | 1 |
+| large_3hop1__862117 | 3-hop | Casa Loma | ✗ | ✗ | 1 |
+| large_4hop1__28352 | 4-hop | Rio Linda | ✗ | ✗ | TIMEOUT |
+| large_4hop1__726675 | 4-hop | Sebastian Cabot | ✓ | ✓ | 3 |
