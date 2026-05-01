@@ -1,6 +1,6 @@
 # OpenCode Spawn Pilot — Research Specification
 
-Version: v6.0
+Version: v6.1
 Summary: Force-spawn experiment shows model CAN spawn when forced via system prompt, achieving 64% accuracy (vs 42% single). 6/11 tasks spawned subagents when forced. Key finding: spawn helps on some tasks but doesn't guarantee success on complex chain-reasoning tasks.
 
 ---
@@ -344,6 +344,38 @@ This suggests forced-multi-agent may have accuracy advantage on complex tasks.
 - Single-agent: 14/20 (70%), Multi-agent: 14/22 (64%) — no accuracy advantage for spawn
 - Medium tier (HotpotQA): single 6/6 (100%), multi 4/6 (67%) — single actually outperforms multi
 - Large tier: multi 4/6 (67%) vs single 3/6 (50%) — slight multi advantage but spawn count = 0
+
+### v6.1 (2026-05-01) — Paired Comparison
+- **New**: Clean paired comparison — same task run in both single and force-multi modes
+- Single: 5/12 (42%), no spawns
+- Force-multi: 7/10 (70%), 6/10 spawned subagents
+- **Key finding**: Force-multi beats single by +30% on paired tasks (7/10 vs 4/10)
+- **Spawn helped 3 tasks** (FM✓ SG✗): BBC Staff (35,402), Rachel Nevada, Chief Detective Maria Shvetsova
+- **Spawn hurt 0 tasks** (FM✗ SG✓): none
+- **When spawned (6 tasks)**: 4/6 correct (67%)
+- **When not spawned despite forced prompt (4 tasks)**: 3/4 correct (75%)
+- **Core insight**: Spawn solves search, not reasoning. Tasks requiring chain spatial/temporal reasoning (3-hop, 4-hop) fail even when subagent finds correct info.
+
+#### Paired Results (10 tasks, both modes tested)
+
+| Task | Ground Truth | Force-Multi | Spawn | Single |
+|------|:------------:|:-----------:|:-----:|:------:|
+| hotpot_5a722a68 | Chief Detective Maria Shvetsova | ✓ (Maria Shvetsova) | - | ✗ (good character) |
+| hotpot_5a85a37d | two termini | ✗ (2) | - | ✗ (2) |
+| hotpot_5a87bd4e | Ned Flanders | ✓ (Ned Flanders) | spawn(1) | ✓ (Ned Flanders) |
+| hotpot_5a8bf083 | northern mockingbird | ✓ (northern mockingbird) | spawn(1) | ✓ (Northern mockingbird) |
+| hotpot_5adfa226 | 35,402 | ✓ (35,402) | spawn(1) | ✗ (35402) |
+| hotpot_5adfff075 | Rachel, Nevada | ✓ (Rachel, Nevada) | spawn(2) | ✗ (documents do not state) |
+| large_2hop_591435 | The African Queen | ✓ | - | ✓ |
+| large_2hop_736167 | ``Hey Jude '' | ✓ (Hey Jude) | - | ✓ (Hey Jude) |
+| large_3hop1_17192 | 1853 | ✗ (1852) | spawn(1) | ✗ (1852) |
+| large_3hop1_862117 | Casa Loma | ✗ (not found) | spawn(1) | ✗ (not found) |
+
+**Single-only tasks (no FM data):**
+| Task | Ground Truth | Single |
+|------|:-----------:|:------:|
+| large_4hop1_28352 | Rio Linda | ✗ (Chicago) |
+| large_4hop1_726675 | Sebastian Cabot | ✓ (Sebastian Cabot) |
 
 ### v6.0 (2026-05-01)
 - Force-spawn experiment: system prompt MUST use task tool, no read/grep for search
