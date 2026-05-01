@@ -2,7 +2,7 @@
 
 研究小模型（Qwen3.5-9B）在 OpenCode 框架下的 subagent spawn 能力是否对多跳问答有帮助。
 
-**核心问题**：当让 Build Agent 可以 spawn subagent 来并 行搜索文档时，准确率是否比单 agent 更高？spawn 解决了什么问题？什么还是解决不了的？
+**核心问题**：当让 Build Agent 可以 spawn subagent 并行搜索文档时，准确率是否比单 agent 更高？spawn 解决了什么问题？什么还是解决不了的？
 
 ---
 
@@ -13,45 +13,13 @@
 ```bash
 # 启动 Qwen3.5-9B（19GB，4 shards）
 bash scripts/start_vllm.sh
-# 或手动：
-CUDA_VISIBLE_DEVICES=4,5,6,7 vllm serve ~/.cache/tiny-agents/models/Qwen/Qwen3.5-9B/ \
-  --served-model-name qwen35-9b \
-  --port 8010 \
-  --gpu-memory-utilization 0.85 \
-  --enforce-eager
 ```
 
 验证：`curl http://localhost:8010/v1/models` 应返回 qwen35-9b。
 
 ### 2. OpenCode 配置
 
-OpenCode 使用自定义 system prompt 覆盖默认行为，配置在：
-
-```
-~/.config/opencode/opencode.json
-```
-
-运行脚本会自动写入这个文件，所以确保 OpenCode 对该文件有写权限。
-
-### 3. 目录结构
-
-```
-opencode-spawn-pilot/
-├── scripts/
-│   ├── start_vllm.sh              # 启动 vLLM
-│   ├── run_comparison_v4_forced.py  # 主要实验脚本（single vs force-multi）
-│   ├── run_opencode.py            # 单次 OpenCode 运行
-│   └── prompt_variants.py         # 多种 prompt 变体测试
-├── configs/                       # OpenCode 配置模板（已过时）
-├── system_prompts/                # system prompt 模板（已过时）
-├── outputs/opencode_spawn_pilot/
-│   ├── task_data/                 # MuSiQue 原始任务
-│   ├── task_data_v2/              # HotpotQA + MuSiQue 任务
-│   ├── comparison_v4_forced/      # v4 force 实验结果
-│   └── comparison_v4_test/       # 最新配对实验结果（single + force-multi 同任务对比）
-├── SPEC.md                        # 详细实验规范和历史
-└── README.md                      # 本文档
-```
+OpenCode 使用 `--message @/path/to/prompt.txt` 传入 system prompt。配置在 `~/.config/opencode/opencode.json` 的设置被**忽略**，只有 `--message` 参数有效。
 
 ---
 
@@ -64,170 +32,123 @@ cd /home/jinxu/opencode-spawn-pilot
 bash scripts/start_vllm.sh
 ```
 
-### 运行配对实验（single vs force-multi）
+### 运行 Force-Multi 实验（v12）
 
 ```bash
-python3 scripts/run_comparison_v4_forced.py --limit 10
+python3 scripts/run_fm_v12.py
 ```
 
-这会：
-1. 读取 `task_data_v2/` 中的任务
-2. 对每个任务分别以 **single** 和 **force-multi** 模式运行
-3. 输出配对结果到 `outputs/opencode_spawn_pilot/comparison_v4_test/`
+### 运行 Single 基线实验（v12）
+
+```bash
+python3 scripts/run_single_v12.py
+```
 
 ### 查看结果
 
-结果在 `outputs/opencode_spawn_pilot/comparison_v4_test/` 下按任务名组织，每个任务有：
+```bash
+# FM v12 结果
+cat outputs/opencode_spawn_pilot/comparison_v12/results_fm_v12.jsonl
 
-```
-<task_id>__single-test/opencode_raw_output.jsonl   # 单 agent 原始输出
-<task_id>__force-multi-test/opencode_raw_output.jsonl  # 强制 spawn 原始输出
-```
-
----
-
-## 实验模式说明
-
-### Single 模式（单 agent 基线）
-
-```python
-SYSTEM_SINGLE = '''You are a research agent answering multi-hop questions...
-
-RULES:
-- Use the read, grep, and bash tools to search through documents
-- Base your answer ONLY on information found in the documents
-- Do not guess or use your own knowledge
-
-Output your final answer on its own line:
-ANSWER: <your answer>'''
-```
-
-Build Agent 只能用自己的 read/grep/bash 工具搜索文档，**完全不知道 subagent 的存在**。
-
-### Force-Multi 模式（强制 spawn）
-
-```python
-SYSTEM_FORCE_MULTI = '''You are a research agent solving multi-hop questions...
-
-CRITICAL:
-1. You MUST use task(description="<search>", prompt="Read the file <FILEPATH> and find <info>", subagent_type="explore") to search documents
-2. Do NOT use read or grep to search documents — only use task tool
-3. Wait for subagent results before answering
-4. You must spawn at least one subagent before giving your final answer
-
-Output your final answer on its own line:
-ANSWER: <your answer>'''
-```
-
-Build Agent **必须**用 `task` 工具 spawn subagent 来搜索文档，不能直接 read/grep。
-
-### 可选 Multi 模式（历史版本，已弃用）
-
-可选 spawn，不强制。在 v5.0 实验中模型 **从不主动 spawn**（22 任务 0 spawn），因此后续改用 force 模式。
-
----
-
-## 任务数据格式
-
-任务 JSON 文件结构：
-
-```json
-{
-  "id": "hotpot_5adfa22655429942ec259ac4",
-  "question": "The broadcaster that released \"HyperNormalisation\" has how many employees in total?",
-  "answer": "35,402",
-  "paragraphs": [
-    {
-      "idx": 0,
-      "title": "HyperNormalisation",
-      "text": "HyperNormalisation is a 2016 BBC documentary..."
-    },
-    {
-      "idx": 1,
-      "title": "British Broadcasting Corporation",
-      "text": "The British Broadcasting Corporation (BBC) is a British public service broadcaster... It employs over 20,950 staff in total, 16,672 of whom are in public sector broadcasting. The total number of staff is 35,402..."
-    }
-  ]
-}
+# Single v12 结果
+cat outputs/opencode_spawn_pilot/comparison_v12_single/results_single_v12.jsonl
 ```
 
 ---
 
-## 核心发现（v6.0）
+## 目录结构
 
-### 实验结果摘要
+```
+opencode-spawn-pilot/
+├── scripts/
+│   ├── start_vllm.sh          # 启动 vLLM（GPU 1, port 8010）
+│   ├── run_fm_v12.py          # Force-Multi 实验脚本（当前版本）
+│   ├── run_single_v12.py      # Single 基线实验脚本（当前版本）
+│   └── expand_tasks_60.py     # 任务数据集扩展脚本
+├── outputs/opencode_spawn_pilot/
+│   ├── task_data_v2/           # 55 个任务 JSON（MuSiQue + HotpotQA）
+│   ├── comparison_v12/         # FM v12 完整结果（55 任务）
+│   └── comparison_v12_single/ # Single v12 部分结果（18/55 任务）
+├── SPEC.md                     # 详细实验规范和版本历史
+└── README.md                   # 本文档
+```
 
-**配对实验（10 个任务，single 和 force-multi 同任务对比）：**
+---
 
-| 指标 | Force-Multi | Single |
-|------|------------|--------|
-| 准确率 | **7/10 (70%)** | 4/10 (40%) |
-| Spawn 率 | 6/10 (60%) | 0（不适用） |
-| Subagent 返回率 | 6/10 (60%) | 0 |
+## 实验设计
 
-**Spawn 帮助了 3 个任务（全部是搜索-答案类）：**
-- `hotpot_5adfa22` — BBC Staff 数量：FM 找到 35,402，SG 格式错误 35402
-- `hotpot_5adfff075` — Rachel, Nevada：FM spawn 2 次找到答案，SG 放弃
-- `hotpot_5a722a68` — Chief Detective Maria Shvetsova：FM 正确，SG 错
+### 两个模式对比
 
-**Spawn 没有伤害任何任务（FM✗ SG✓ = 0）**
+| 模式 | 说明 | Spawn 行为 |
+|------|------|------------|
+| **Single** | 单 agent，直接搜索文档 | **禁止**使用 `task()` 工具 |
+| **Force-Multi（FM）** | 单 agent，但**强制**通过 `task()` spawn 子代理 | **必须** spawn |
 
-### 关键洞察
+### 任务数据集
 
-**Spawn 只解决"搜索"问题，不解决"推理"问题。**
+- **来源**：MuSiQue（多跳问答标准数据集）+ 少量 HotpotQA 原始任务
+- **难度分层**：2-hop、3-hop、4-hop
+- **任务数**：55 个任务
 
-成功案例（搜到=答对）：
-- Subagent 返回 "BBC total staff is 35,402" → Build Agent 直接输出 35,402 ✓
+### 评估标准
 
-失败案例（搜到≠答对）：
-- Subagent 返回 "Rachel, Nevada is 25 miles north of Groom Lake" → Build Agent 推理链断裂，不知道 Groom Lake 以南 25 英里就是 Rachel ✗
+**Fuzzy is_correct**（v12 采用）：
+1. 标准化（去标点小写）后严格相等
+2. 答案核心词（跳过句首 stopwords）是预测的连续子串
+3. 答案的所有内容词均作为完整词出现在预测中
 
-**当 subagent 给出可以直接使用的答案时，spawn 有用；当需要链式推理时，spawn 仍然不够。**
+---
 
-### Spawn 行为分析
+## 核心发现
 
-| Spawn 情况 | 任务数 | 正确数 | 准确率 |
-|-----------|--------|--------|--------|
-| Spawn 了 | 6 | 4 | 67% |
-| 没 Spawn（prompt 强制但模型拒绝） | 4 | 3 | 75% |
+### 发现 1：模型从不自愿 spawn（v5.0：22 任务 0 spawn）
 
-模型倾向于在更困难的任务上 spawn，但 spawn 后的准确率反而更低，说明 spawn 主要帮助的是并 行搜索，而不是推理能力。
+即使文档有 100 个段落，任务对并行搜索有明显帮助，模型也从不主动使用 `task()` 工具。
+
+### 发现 2：强制 spawn 后 spawn 率达到 92-100%
+
+用强制提示词后模型能服从，但 subagent **返回结果**的比例只有 35%。
+
+### 发现 3：Spawn 解决搜索，不解决推理
+
+| 任务类型 | Spawn 帮助程度 |
+|----------|---------------|
+| 直接提取（数字、人名、事实） | ✅ 有效，subagent 找到就对了 |
+| 链式推理（空间关系、多跳逻辑） | ❌ 无效，subagent 找到信息，Build Agent 还是推理错 |
+
+**典型失败**："A 在 B 以南 25 英里" → subagent 找到了 A 和 B 的位置，但 Build Agent 不会逆推出 "B 在 A 以北 25 英里"。
+
+### 发现 4：9B 模型的推理是瓶颈，不是搜索
+
+核心结论：**subagent 的搜索能力不是问题，Build Agent 的链式推理能力才是瓶颈。**
+
+---
+
+## 当前实验状态
+
+### v12（当前版本）
+
+| 模式 | 任务数 | 准确率 | Spawn 率 | Subagent 返回率 |
+|------|--------|--------|----------|----------------|
+| Force-Multi | 55 | 7/55 (13%) strict, **20/55 (36%) fuzzy** | 100% | 35% |
+| Single | 18/55（跑中） | 12/18 (67%) fuzzy | 0% | — |
+
+> 注：FM fuzzy 20/55 和 Single 12/18 均为 fuzzy is_correct，不完全可比。
+
+### v11（有完整配对）
+
+| 模式 | 任务数 | 准确率 |
+|------|--------|--------|
+| Force-Multi | 30 | 16/30 (53%) |
+| Single | 30 | 15/30 (50%) |
+
+Spawn 带来了 **+3%** 的提升（53% vs 50%）。
 
 ---
 
 ## 已验证结论
 
-1. **模型不主动 spawn**：在可选 spawn 模式下，Qwen3.5-9B 从不主动 spawn（v5.0 实验：22 任务 0 spawn）
-2. **强制 spawn 有效**：用 prompt 强制后，60% 任务确实 spawn 了
-3. **Spawn 有上限**：即使强制 spawn，3/4 跳复杂推理任务仍然失败，根因是 Build Agent 推理链断裂，不是 subagent 搜索失败
-4. **配对优势明显**：Force-Multi (70%) vs Single (40%)，但这是因为任务偏向搜索类而非推理类
-
----
-
-## 待解决问题
-
-1. **4 跳任务没有 force-multi 数据**：large_4hop1 的两个任务只在 single 模式下跑了，需要补全
-2. **3 跳失败根因**：subagent 找到了 "1853" 和 "Casa Loma" 相关段落，但 Build Agent 还是答错，需要区分是 subagent 输出格式问题还是 Build Agent 推理问题
-3. **不同模型对比**：目前只测了 Qwen3.5-9B，没有对比更大或更小的模型
-
----
-
-## 相关文件索引
-
-| 文件 | 说明 |
-|------|------|
-| `SPEC.md` | 完整实验规范、版本历史、所有数据表格 |
-| `scripts/run_comparison_v4_forced.py` | 主要实验脚本 |
-| `scripts/start_vllm.sh` | vLLM 启动脚本 |
-| `outputs/opencode_spawn_pilot/comparison_v4_test/` | 最新配对实验结果 |
-| `outputs/opencode_spawn_pilot/task_data_v2/` | HotpotQA 任务数据 |
-| `outputs/opencode_spawn_pilot/task_data/` | MuSiQue 任务数据 |
-
----
-
-## 版本历史
-
-- **v6.0** (2026-05-01)：Force-spawn 配对实验，FM 70% vs SG 40%，spawn 帮助搜索但不帮助推理
-- **v5.0** (2026-05-01)：可选 spawn 全面失败，22 任务 0 spawn，单 agent 反而更好
-- **v4.0** (2026-04-30)：发现 config 文件覆盖方案，实验框架成熟
-- **v3.0** (2026-04-29)：Proof of concept，2 任务验证可行
+1. **模型不主动 spawn**：在可选 spawn 模式下，Qwen3.5-9B 从不主动 spawn
+2. **强制 spawn 有效**：用 prompt 强制后，92-100% 任务确实 spawn 了
+3. **Spawn 有上限**：即使强制 spawn，3/4 跳复杂推理任务仍然失败，根因是 Build Agent 推理链断裂
+4. **推理是瓶颈**：9B 模型不是搜索能力不够，是链式推理能力不够

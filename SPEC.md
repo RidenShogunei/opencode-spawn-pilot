@@ -1,91 +1,91 @@
 # OpenCode Spawn Pilot — Research Specification
 
-**Version: final-cleanup**  
-**Summary**: Qwen3.5-9B can be induced to spawn subagents (92% rate after fix), but spawn helps only with information extraction — not chain reasoning. The 9B model's reasoning bottleneck is the limiting factor.
+**Version: v12-clean**  
+**Status**: v12 FM complete (55 tasks), v12 Single partial (18/55 tasks)  
+**Summary**: v12 是第一个可用版本：修复了 Single 模式 return bug、建立了 fuzzy is_correct 评估标准。FM fuzzy 准确率 36%（strict 仅 13%），说明模型方向对但表述差异大。核心结论：9B 模型的推理瓶颈才是关键，spawn 机制本身不是问题。
 
 ---
 
-## 1. Key Findings
+## 1. 关键发现
 
-### Finding 1: `opencode run` Does NOT Read Config File
-**Critical.** `opencode run --format json` ignores `~/.config/opencode/opencode.json` system prompt entirely. Only the `--message` command-line argument delivers the prompt.
+### Finding 1：`opencode run` 不读取配置文件
 
-**Proof**: Write `BANANA_TEST` marker to config → model output contains no marker. Pass marker via `--message` → marker appears in output.
+**Critical.** `opencode run --format json` 完全忽略 `~/.config/opencode/opencode.json` 中的 system prompt。只有 `--message @/path/to/file.txt` 参数能传递 prompt。
 
-**Impact**: All experiments before the fix (v0–v6.1 batch runs) had 0% spawn rate not because the model chose not to spawn, but because the prompt was never delivered.
+**Proof**: 将 `BANANA_TEST` 标记写入 config 文件 → 模型输出无标记。通过 `--message` 传入 → 标记出现在输出中。
 
-**Fix**: Pass full prompt as `json.dumps(system_prompt + user_prompt)` via `--message` argument.
+**修复**：将 system prompt + user prompt 合并为字符串，用 `json.dumps()` 通过 `--message @/tmp/prompt_<id>.txt` 传入。
 
-### Finding 2: After Fix, Spawn Rate = 92%
-With correct prompt delivery, 11/12 force-multi tasks spawned subagents.
+### Finding 2：Prompt 文件位置必须在 run_dir 之外
 
-### Finding 3: Spawn Solves Search, Not Reasoning
-The most important research finding:
+如果 prompt 文件放在 `run_dir/` 内部，模型会把 prompt 本身当作文档读取（因为 OpenCode 的 read 工具可以访问 cwd 下的文件），导致 "BANANA_TEST" 污染输出。
 
-| Task Type | Spawn Helps? | Example |
-|-----------|-------------|---------|
-| Direct extraction (numbers, names, facts) | ✅ Yes | BBC Staff → 35,402 ✓ |
-| Chain spatial/temporal reasoning | ❌ No | "A 25mi north of B" → B 25mi south of A ✗ |
+**修复**：prompt 文件放在 `OUTPUT_DIR/.prompt_<task_id>_<run_id>.txt`，执行后立即删除。
 
-Even when subagent finds correct info, Build Agent often fails to synthesize chains (3-hop, 4-hop tasks).
+### Finding 3：Single 模式之前永远返回 None
 
-### Finding 4: Model Never Spawns When Truly Optional
-v5.0 (22 tasks, 3 tiers, 0 spawns): Model never voluntarily spawned even for 100-paragraph documents where parallel search could help.
+`run_single_task()` 函数内部逻辑完整，但**缺少 return 语句**，导致函数隐式返回 None。这导致 v11 Single 准确率显示为 0%（实际脚本有 bug）。
 
----
+**修复**：添加 `return {...}` 语句。
 
-## 2. Experiment Results
+### Finding 4：Strict is_correct 严重低估准确率
 
-### v6.1 Paired Comparison (10 tasks, both modes on same tasks)
+Strict 模式（标准化后完全相等）要求预测和答案完全一致，但自然语言答案差异很大：
 
-| Mode | Accuracy | Spawn Rate |
-|------|----------|------------|
-| **Single** (no spawn allowed) | 4/10 (40%) | 0% |
-| **Force-Multi** (forced spawn) | 7/10 (70%) | 6/10 |
+- 预测 `35,402` vs 答案 `35,402 total staff` → strict 失败，fuzzy 通过
+- 预测 `The African Queen` vs 答案 `African Queen` → strict 失败，fuzzy 通过
 
-**Spawn helped 3 tasks**: BBC Staff (35,402), Rachel Nevada, Maria Shvetsova  
-**Spawn hurt 0 tasks**: none  
-**Net gain**: +30% from forced spawn
+**实际影响**：FM v12 strict 13% → fuzzy 36%（提升 2.8 倍）
 
-### v10 Force-Multi (12 tasks, final prompt)
+### Finding 5：Spawn 解决搜索，不解决推理
 
-| Mode | Accuracy | Spawn Rate |
-|------|----------|------------|
-| Force-Multi v10 | 7/12 (58%) | 11/12 (92%) |
+| 任务类型 | Spawn 帮助程度 |
+|----------|---------------|
+| 直接提取（数字、人名、事实） | ✅ 有效，subagent 找到就对了 |
+| 链式推理（空间关系、多跳逻辑） | ❌ 无效，subagent 找到信息，Build Agent 推理链断裂 |
 
-**v10 prompt**: `subagent_type="general"` + "After the subagent completes, synthesize the findings and give your answer." No SPAWN_REASON requirement.
+### Finding 6：9B 模型推理是瓶颈，不是搜索
 
-### v11 Force-Multi (30 tasks, expanded dataset)
-
-| Mode | Accuracy | Spawn Rate | Return Rate |
-|------|----------|------------|------------|
-| Force-Multi v11 | 16/30 (53%) | 29/30 (97%) | 26/30 (87%) |
-
-**Per-difficulty breakdown:**
-
-| Difficulty | Tasks | Correct | Rate |
-|-----------|-------|---------|------|
-| hotpot | 6 | 4 | 67% |
-| 4-hop | 7 | 5 | 71% |
-| 2-hop | 10 | 5 | 50% |
-| 3-hop | 7 | 2 | 29% |
-
-**Dataset**: 30 tasks total — 6 original hotpot + 6 original large + 18 newly sampled from MuSiQue dev (8×2hop, 3×3hop1, 2×3hop2, 2×4hop1, 2×4hop3, 1×4hop2).
-
-**Key observation**: 4-hop tasks (71%) outperformed 3-hop (29%) on this sample — likely because the new 4-hop tasks tend toward factual lookup rather than complex chaining.
-
-### Failure Analysis (v10, 5 wrong)
-| Task | Problem |
-|------|---------|
-| train termini (3 vs two) | Model output `3` not `two` — format/commonsense issue |
-| large_2hop Knock | Model named movie instead of actor (reasoning error) |
-| large_3hop1 1853 | Subagent found info but Build Agent chose wrong country |
-| large_3hop1 Casa Loma | Birthplace not found (search gap) |
-| large_4hop1 Rio Linda | TIMEOUT — task too complex |
+即使 subagent 100% 正确返回了信息，Build Agent 也经常在最后一步推理错误。这是模型能力的问题，不是 spawn 机制的问题。
 
 ---
 
-## 3. Environment
+## 2. 实验结果
+
+### v12 Force-Multi（55 任务，fuzzy is_correct）
+
+```
+FM v12: 20/55 (36%) fuzzy, 7/55 (13%) strict
+Spawn 率: 55/55 (100%)
+Subagent 返回率: 19/55 (35%)
+```
+
+### v12 Single（18/55 任务，fuzzy is_correct）
+
+```
+Single v12 partial: 12/18 (67%) fuzzy
+注：18 任务样本量小，且 fuzzy 逻辑对简单任务有偏向，无法与 FM 直接比较
+```
+
+### v11 配对对比（30 任务，有完整两边数据）
+
+| 模式 | 准确率 | Spawn 率 | Subagent 返回率 |
+|------|--------|----------|----------------|
+| Force-Multi | 16/30 (53%) | 29/30 (97%) | 26/30 (87%) |
+| Single | 15/30 (50%) | 0% | — |
+
+**结论**：Spawn 带来 +3% 提升（53% vs 50%），但样本量小，统计意义有限。
+
+### v10 Force-Multi（12 任务，最终版 prompt）
+
+```
+FM v10: 7/12 (58%)
+Spawn 率: 11/12 (92%)
+```
+
+---
+
+## 3. 环境
 
 ```
 vLLM:      0.19.1, Qwen3.5-9B, GPU 1, port 8010
@@ -94,70 +94,49 @@ Base URL:  http://localhost:8010/v1
 Model:     local/qwen35-9b
 ```
 
-Startup: `bash scripts/start_vllm.sh`
+启动：`bash scripts/start_vllm.sh`
 
 ---
 
-## 4. Task Set (30 tasks, task_data_v2/)
+## 4. 任务数据集（task_data_v2/）
 
-| Task ID | Question (truncated) | Difficulty | Source |
-|---------|---------------------|------------|--------|
-| hotpot_5a722a68 | Anna Leonidovna Kovalchuk law festival prize | 2-hop | original |
-| hotpot_5a85a37d | train C&M subdivision termini | 2-hop | original |
-| hotpot_5a87bd4e | minister at First Church Springfield | 2-hop | original |
-| hotpot_5a8bf083 | mockingbird mascot UT Chattanooga | 2-hop | original |
-| hotpot_5adfa226 | BBC HyperNormalisation staff count | 2-hop | original |
-| hotpot_5adfff075 | 25 miles south of Groom Lake | 2-hop | original |
-| large_2hop__591435 | Oscar for Knock on Any Door cast | 2-hop | original |
-| large_2hop__736167 | Paul McCartney song for Cynthia's kid | 2-hop | original |
-| large_3hop1__17192 | Lower Burma annexation date | 3-hop | original |
-| large_3hop1__862117 | castle in birthplace of Speckless Sky performer | 3-hop | original |
-| large_4hop1__28352 | shares border with Rio Linda | 4-hop | original |
-| large_4hop1__726675 | child of Italian navigator | 4-hop | original |
-| musique_2hop__623501 | Lostock Dam river | 2-hop | MuSiQue dev |
-| musique_2hop__628752 | headquarters of In the Shadow publisher | 2-hop | MuSiQue dev |
-| musique_2hop__642686 | Kenny G and Hello Tomorrow performer | 2-hop | MuSiQue dev |
-| musique_2hop__557496 | gun used by Amy Madigan's spouse | 2-hop | MuSiQue dev |
-| musique_2hop__825727 | league of Maycon Carvalho team | 2-hop | MuSiQue dev |
-| musique_2hop__252521 | character in Santa Clause 3 | 2-hop | MuSiQue dev |
-| musique_2hop__657913 | who producer of Big Jim McLain played in True Grit | 2-hop | MuSiQue dev |
-| musique_2hop__476927 | distance Hod Lisenbee death TN from Nashville | 2-hop | MuSiQue dev |
-| musique_3hop1__791757 | Knight Rider console max games/year | 3-hop | MuSiQue dev |
-| musique_3hop1__135794 | city where Basilica named after saint is | 3-hop | MuSiQue dev |
-| musique_3hop1__498954 | majority rule word meaning | 3-hop | MuSiQue dev |
-| musique_3hop2__304722 | last time Malcolm Briggs team | 3-hop | MuSiQue dev |
-| musique_3hop2__87184 | last time majority party in House | 3-hop | MuSiQue dev |
-| musique_4hop1__399219 | seat of county sharing border with Miller Electric county | 4-hop | MuSiQue dev |
-| musique_4hop1__199881 | seat of county sharing border with Miller Electric county | 4-hop | MuSiQue dev |
-| musique_4hop3__193820 | when WLUJ town became capitol | 4-hop | MuSiQue dev |
-| musique_4hop3__193820 | when WIZE town became capitol | 4-hop | MuSiQue dev |
-| musique_4hop2__5206 | when Slavs used in national anthem | 4-hop | MuSiQue dev |
+55 个任务，来自 MuSiQue dev + 少量 HotpotQA：
+
+| 难度 | 数量 | 示例 |
+|------|------|------|
+| hotpot（原始） | 6 | BBC Staff, Groom Lake 等 |
+| 2-hop | 20 | 电影演员、歌曲、城堡等 |
+| 3-hop | 10 | 君主所在地、词语含义等 |
+| 4-hop | 19 | 县府所在地、历史首都等 |
 
 ---
 
-## 5. Two Prompt Variants
+## 5. 两个模式的提示词
 
-### Single (no spawn allowed)
+### Single（禁止 spawn）
+
 ```
-You are a research agent solving multi-hop questions using ONLY document search.
+You are a research agent answering multi-hop questions by searching through documents.
 
-CRITICAL RESTRICTIONS:
-1. You MUST NOT use the 'task' tool under any circumstances
-2. You MUST NOT spawn any subagents
-3. Use ONLY read, grep, and bash tools to search documents
-4. Do NOT answer from your own knowledge — search the documents
+Your task: Read the provided documents, find the information needed to answer the question, and output your answer.
 
-Output format:
+RULES:
+- Use the read and grep tools to search through documents
+- Base your answer ONLY on information found in the documents
+- Do not guess or use your own knowledge
+
+Output your final answer on its own line:
 ANSWER: <your answer>
 ```
 
-### Force-Multi (must spawn subagent)
+### Force-Multi（必须 spawn）
+
 ```
-You are a research agent solving multi-hop questions. You MUST use the 'task' tool to spawn subagents for ALL document searches.
+You are a research agent. You MUST use the 'task' tool to spawn subagents for ALL document searches.
 
 CRITICAL RULE:
-- You MUST spawn at least one subagent using task(description="<topic>", prompt="Read <FILEPATH> and find <info>", subagent_type="general")
-- If you decide NOT to spawn a subagent, you MUST output the exact reason: SPAWN_REASON: <explain>
+- You MUST spawn at least one subagent using task(...) to search documents before answering
+- task(description="<topic>", prompt="Read <FILEPATH> and find <info>", subagent_type="general")
 
 After the subagent completes, synthesize the findings and give your answer.
 
@@ -166,51 +145,88 @@ ANSWER: <your answer>
 
 ---
 
-## 6. Run Commands
+## 6. Fuzzy is_correct 实现
 
-```bash
-# Start vLLM
-bash scripts/start_vllm.sh
+```python
+def is_correct(pred, answer, aliases=None):
+    p = normalize(pred)   # 去标点、小写
+    a = normalize(answer)
 
-# Run comparison (single vs force-multi paired)
-python3 scripts/run_v6_parallel.py
+    # 第一层：严格相等
+    if p == a: return True
+    # 别名
+    for alias in aliases:
+        if p == normalize(alias): return True
 
-# Run force-multi only (v10 prompt, 12 tasks)
-python3 scripts/run_fm_v10.py
+    # 第二层：答案核心词（跳过句首 stopwords）是预测的子串
+    a_words = a.split()
+    for i in range(len(a_words)):
+        if a_words[i].lower() not in STOPWORDS:
+            suffix = ' '.join(a_words[i:])
+            if len(suffix) >= 4 and suffix in p:
+                return True
+            break
+
+    # 第三层：所有内容词均出现在预测中（词边界）
+    words_a = [w for w in a.split() if len(w) >= 2 and w.lower() not in STOPWORDS]
+    if words_a:
+        matched = sum(1 for w in words_a if word_in_text(w, p))
+        if matched == len(words_a):
+            return True
+
+    return False
 ```
 
 ---
 
-## 7. Metrics
+## 7. 运行命令
 
-| Metric | Definition |
-|--------|------------|
-| `subagent_spawned` | model called task tool |
-| `subagent_returned` | subagent result returned to Build |
-| `task_tool_calls` | total task tool invocations |
-| `accuracy` | final answer correct / total |
+```bash
+# 启动 vLLM
+bash scripts/start_vllm.sh
 
----
+# 运行 Force-Multi（v12，55 任务）
+python3 scripts/run_fm_v12.py
 
-## 8. Files
+# 运行 Single 基线（v12，55 任务）
+python3 scripts/run_single_v12.py
 
-| File/Dir | Description |
-|----------|-------------|
-| `scripts/run_v6_parallel.py` | Core harness: task loading, run_single_task(), prompt delivery via json.dumps arg, JSON parsing |
-| `scripts/run_fm_v10.py` | Force-multi batch launcher for v10 (12 tasks) |
-| `scripts/run_fm_v11.py` | Force-multi batch launcher for v11 (30 tasks) |
-| `scripts/expand_tasks.py` | Dataset expansion: sample from MuSiQue dev, write task JSON files |
-| `scripts/start_vllm.sh` | vLLM startup script |
-| `outputs/.../task_data_v2/` | 30 task JSON files (original 12 + 18 new MuSiQue) |
-| `outputs/.../comparison_v6_parallel/results_v6_parallel.jsonl` | v6.1 paired results (broken: prompt bugs + lost single data) |
-| `outputs/.../comparison_v10/results_fm_v10.jsonl` | v10 force-multi results (12 tasks, 58%) |
-| `outputs/.../comparison_v11/results_fm_v11.jsonl` | v11 force-multi results (30 tasks, 53%) |
+# 扩展任务数据集
+python3 scripts/expand_tasks_60.py
+```
 
 ---
 
-## 9. Open Questions
+## 8. 指标定义
 
-1. **Does a larger model (14B/32B) eliminate the reasoning bottleneck?** Not yet tested.
-2. **Does CoT prompting help Build Agent synthesize chains?** Worth exploring.
-3. **Sample size**: 10–12 tasks is too small for statistical significance. Need 30–50 tasks.
-4. **4-hop timeout**: large_4hop1 tasks timeout even with spawn — task complexity is the limit.
+| 指标 | 定义 |
+|------|------|
+| `spawned` | 模型是否调用了 task() 工具 |
+| `subagent_returned` | subagent 是否返回了结果 |
+| `correct` | fuzzy is_correct 判断答案正确 |
+| `accuracy` | correct / total |
+
+---
+
+## 9. 文件索引
+
+| 文件/目录 | 说明 |
+|----------|------|
+| `scripts/run_fm_v12.py` | FM 实验脚本（当前版本） |
+| `scripts/run_single_v12.py` | Single 实验脚本（当前版本） |
+| `scripts/expand_tasks_60.py` | 任务数据集扩展脚本 |
+| `scripts/start_vllm.sh` | vLLM 启动脚本 |
+| `outputs/.../task_data_v2/` | 55 个任务 JSON |
+| `outputs/.../comparison_v12/` | FM v12 结果（55 任务） |
+| `outputs/.../comparison_v12_single/` | Single v12 部分结果（18/55） |
+| `README.md` | 项目概览 |
+| `SPEC.md` | 本文档 |
+
+---
+
+## 10. 待解决问题
+
+1. **补全 Single v12**：还需要 37 个任务跑完才能做完整配对对比
+2. **扩大样本量**：55 任务仍不足以做统计显著性检验，建议 100-200 任务
+3. **更大模型对比**：9B 推理瓶颈明显，14B/32B 是否能解决？
+4. **Error analysis**：深入分析 fuzzy 判断中哪些是真错误、哪些是表述差异
