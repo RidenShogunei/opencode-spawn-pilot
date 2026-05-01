@@ -1,0 +1,6 @@
+Script started on 2026-05-01 22:28:31+08:00 [<not executed on terminal>]
+{"type":"step_start","timestamp":1777645714188,"sessionID":"ses_21c0f0a5cffeWfn2FVVTIawki6","part":{"id":"prt_de3f0fb06001BJ70qda8X8x6jg","messageID":"msg_de3f0f643001GhSxgEUkd8fEZM","sessionID":"ses_21c0f0a5cffeWfn2FVVTIawki6","snapshot":"fa9e3ec0324bb359305527243b895e03172ca15e","type":"step-start"}}
+{"type":"text","timestamp":1777645715831,"sessionID":"ses_21c0f0a5cffeWfn2FVVTIawki6","part":{"id":"prt_de3f0fb090014FIoT9OyPH6a8n","messageID":"msg_de3f0f643001GhSxgEUkd8fEZM","sessionID":"ses_21c0f0a5cffeWfn2FVVTIawki6","type":"text","text":"A file path was provided for reference, and the message indicates a 'BANANA_TEST' condition requiring the response 'PEAR' - this appears to be a simple test/signal.\n</think>\n\nPEAR","time":{"start":1777645715826,"end":1777645715826}}}
+{"type":"step_finish","timestamp":1777645715891,"sessionID":"ses_21c0f0a5cffeWfn2FVVTIawki6","part":{"id":"prt_de3f10179001MtGZZC1gacALZl","reason":"stop","snapshot":"cc083d74bf5c78fc1f90b0d558afd6bc47cd915e","messageID":"msg_de3f0f643001GhSxgEUkd8fEZM","sessionID":"ses_21c0f0a5cffeWfn2FVVTIawki6","type":"step-finish","tokens":{"total":8589,"input":8548,"output":41,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0}}
+
+Script done on 2026-05-01 22:28:36+08:00 [COMMAND_EXIT_CODE="0"]

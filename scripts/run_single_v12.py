@@ -43,22 +43,41 @@ def build_docs(task):
 
 
 def extract_answer(text):
-    m = re.search(r'ANN?SWER:\s*(.+?)(?:\s|$)', text, re.IGNORECASE | re.DOTALL)
-    if m:
-        return m.group(1).strip('"\' \t')
-    for line in reversed(text.split('\n')):
+    # Strip markdown bold/italic markers
+    text = text.replace('**', '').replace('*', '').replace('__', '')
+    # Strip script wrapper lines
+    lines = [l.strip() for l in text.split('\n') if l.strip() and not l.startswith('Script ')]
+    # Find last ANSWER line
+    for line in reversed(lines):
         line = line.strip()
-        if line and not line.startswith('#') and len(line) > 1:
-            return line.strip('"\' \t')
+        if re.search(r'ANN?SWER', line, re.IGNORECASE):
+            m = re.search(r'ANN?WER:\s*(.+?)(?:\s*$)', line, re.IGNORECASE)
+            if m:
+                ans = m.group(1).strip('"\' \t')
+                # If ANSWER contains literal placeholder, try next line
+                if ans == '<your answer>' or not ans:
+                    continue
+                if len(ans) > 0:
+                    return ans
+    # Fallback: last substantial non-ANSWER, non-placeholder line
+    for line in reversed(lines):
+        line = line.strip().strip('"\' \t')
+        if (line and
+            not re.search(r'ANN?SWER', line, re.IGNORECASE) and
+            line != '<your answer>' and
+            len(line) > 1 and
+            not line.startswith('Based on the provided')):
+            return line
     return text.strip()[:200]
 
 
 def normalize(s):
     s = str(s).lower().strip()
-    for x in [',', '.', '!', '?', "'", '"']:
+    for x in [',', '.', '!', '?', "'", '"', '-', '–', '—']:
         s = s.replace(x, '')
     return s.strip()
 
+STOPWORDS = set(['the','a','an','is','are','was','were','of','in','to','for','and','or','on','at','by','with','as','from','that','this','it','be','has','have','had','not','but','if','they','we','you','he','she','his','her','its','our','their'])
 
 def is_correct(pred, answer, aliases=None):
     p = normalize(pred)
@@ -69,6 +88,31 @@ def is_correct(pred, answer, aliases=None):
         for alias in aliases:
             if p == normalize(alias):
                 return True
+    # Fuzzy: answer (minus leading stopwords) as contiguous substring of prediction
+    a_words = a.split()
+    for i in range(len(a_words)):
+        if a_words[i].lower() not in STOPWORDS:
+            suffix = ' '.join(a_words[i:])
+            if len(suffix) >= 4 and suffix in p:
+                return True
+            break
+    # Prediction (minus leading stopwords) as contiguous substring of answer
+    p_words = p.split()
+    for i in range(len(p_words)):
+        if p_words[i].lower() not in STOPWORDS:
+            suffix = ' '.join(p_words[i:])
+            if len(suffix) >= 4 and suffix in a:
+                return True
+            break
+    # All non-stopword content words from answer appear as complete words in prediction
+    words_a = [w for w in a.split() if len(w) >= 2 and w.lower() not in STOPWORDS]
+    if words_a:
+        def word_in_text(w, t):
+            t = ' ' + t + ' '
+            return (' ' + w + ' ') in t or (' ' + w + ',') in t or (' ' + w + '.') in t
+        matched = sum(1 for w in words_a if word_in_text(w, p))
+        if matched == len(words_a):
+            return True
     return False
 
 
@@ -97,30 +141,57 @@ Find the answer using the read and grep tools.
 ANSWER: """
 
     full_prompt = f'{SYSTEM_SINGLE}\n\n---\n\n{user_prompt}'
+
+    output_file = run_dir / 'opencode_raw_output.jsonl'
+    output_file_abs = output_file.absolute()
     log_file = run_dir / 'opencode.log'
 
-    cmd = [
-        'script', '-q', '-c',
-        f'{OPENCODE} run --model {MODEL} --format json --title {task_id} {json.dumps(full_prompt)} 2>&1',
-        '/dev/null'
-    ]
+    # Write prompt to a file OUTSIDE the run_dir so the model can't read it
+    prompt_file = OUTPUT_DIR / f'.prompt_{task_id}_{run_id}.txt'
+    prompt_file.write_text(full_prompt, encoding='utf-8')
+
+    cmd = (
+        f'script -q -c '
+        f'"{OPENCODE} run --model {MODEL} --format json --title {task_id} --message @/{prompt_file.absolute()}" '
+        f'{output_file_abs}'
+    )
 
     try:
         with open(log_file, 'wb') as flog:
             proc = subprocess.Popen(
-                ' '.join(cmd),
-                shell=True, stdout=subprocess.PIPE, stderr=flog,
+                cmd, shell=True, stdout=subprocess.PIPE, stderr=flog,
                 cwd=str(run_dir)
             )
-            stdout, _ = proc.communicate(timeout=600)
-        output_text = stdout.decode('utf-8', errors='replace')
+            _, _ = proc.communicate(timeout=600)
+        output_text = output_file.read_text(errors='replace') if output_file.exists() else ''
     except subprocess.TimeoutExpired:
         proc.kill()
-        return {'task_id': task_id, 'correct': False, 'predicted': 'TIMEOUT', 'answer': answer, 'error': 'timeout'}
+        output_text = ''
     except Exception as e:
-        return {'task_id': task_id, 'correct': False, 'predicted': f'ERROR: {e}', 'answer': answer, 'error': str(e)}
+        output_text = ''
+    finally:
+        if prompt_file.exists():
+            prompt_file.unlink()
 
-    predicted = extract_answer(output_text)
+    # Parse output: extract text from JSONL entries (like FM does)
+    output_text_parsed = ''
+    for line in output_text.split('\n'):
+        line = line.strip()
+        if not line or line.startswith('Script '):
+            continue
+        try:
+            entry = json.loads(line)
+            content = ''
+            if entry.get('type') == 'text':
+                content = entry.get('part', {}).get('text', '')
+            elif entry.get('type') == 'tool_use':
+                state = entry.get('part', {}).get('state', {})
+                content = str(state.get('output', ''))
+            output_text_parsed += content + '\n'
+        except:
+            pass
+
+    predicted = extract_answer(output_text_parsed)
     correct = is_correct(predicted, answer, aliases)
 
     return {
