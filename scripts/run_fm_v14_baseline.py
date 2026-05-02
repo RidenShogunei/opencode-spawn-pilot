@@ -255,8 +255,9 @@ ANSWER: """
     spawned = False
     subagent_returned = False
     all_text_parts = []
+    task_event_index = None
 
-    for event in events:
+    for i, event in enumerate(events):
         etype = event.get('type', '')
         part = event.get('part', {})
 
@@ -264,12 +265,17 @@ ANSWER: """
             tool_name = part.get('tool', '')
             if tool_name == 'task':
                 spawned = True
+                task_event_index = i
 
         elif etype == 'text':
             content = part.get('text', '')
             all_text_parts.append(content)
-            if spawned and 'subagent' in content.lower():
-                subagent_returned = True
+
+    # If a task tool was used and there are events after it, subagent returned
+    # (step_finish + step_start after tool_use means the subagent completed and
+    # main agent resumed)
+    if task_event_index is not None and task_event_index < len(events) - 1:
+        subagent_returned = True
 
     full_text = '\n'.join(all_text_parts)
     predicted, _ = extract_answer_from_jsonl_events(events)
