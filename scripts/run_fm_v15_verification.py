@@ -62,7 +62,11 @@ def build_docs(task):
 
 
 def extract_answer_from_jsonl_events(events):
-    """Extract answer from parsed JSONL events (cleaner than text parsing)."""
+    """Extract answer from parsed JSONL events.
+    
+    v15 format: Agent writes "## ANSWER: **X**" or "## ANSWER: X" with verification steps.
+    We prioritize ## ANSWER patterns over bold-text fallbacks.
+    """
     # Collect all text content
     all_texts = []
     for event in events:
@@ -71,43 +75,56 @@ def extract_answer_from_jsonl_events(events):
 
     full_text = '\n'.join(all_texts)
 
-    # Pattern 1: ANSWER: <text>
-    text_clean = full_text.replace('**', '').replace('*', '').replace('__', '')
-    for line in reversed(text_clean.split('\n')):
-        line = line.strip()
-        if re.search(r'ANN?SWER', line, re.IGNORECASE):
-            m = re.search(r'ANN?WER:\s*(.+?)(?:\s*$)', line, re.IGNORECASE)
-            if m:
-                ans = m.group(1).strip('"\': \t')
-                if ans and ans != '<your answer>' and len(ans) > 0:
-                    return ans, full_text
+    # Priority 0: ## ANSWER: **X** (v15 bold, highest priority)
+    m = re.search(r'##\s*ANSWER:\s*\*\*(.+?)\*\*', full_text, re.DOTALL)
+    if m:
+        ans = m.group(1).strip()
+        if ans and len(ans) > 1:
+            return ans, full_text
 
-    # Pattern 2: **The [answer] is X.** or **Answer: X.**
-    m = re.search(r'\*\*[Tt]he [^\*]*is ([^.]+)\.\*\*', full_text)
+    # Priority 1: ## ANSWER: X (v15 plain)
+    m = re.search(r'##\s*ANSWER:\s*(.+?)(?:\n|$)', full_text, re.IGNORECASE)
+    if m:
+        ans = m.group(1).strip()
+        if ans and len(ans) > 1:
+            return ans, full_text
+
+    # Priority 2: ANSWER: **X** (old format bold)
+    m = re.search(r'ANSWER:\s*\*\*(.+?)\*\*', full_text, re.DOTALL)
+    if m:
+        ans = m.group(1).strip()
+        if ans and len(ans) > 1:
+            return ans, full_text
+
+    # Priority 3: ANSWER: X (simple, reversed scan for last occurrence)
+    for line in reversed(full_text.split('\n')):
+        line = line.strip()
+        if not line:
+            continue
+        line_clean = line.replace('**', '')
+        m = re.search(r'ANSWER:\s*(.+)', line_clean, re.IGNORECASE)
+        if m:
+            ans = m.group(1).strip()
+            if ans and ans != '<your answer>' and len(ans) > 1:
+                return ans, full_text
+
+    # Priority 4: **The answer is X.**
+    m = re.search(r'\*\*[Tt]he\s+[^\*]+is\s+([^.]+)\.', full_text)
     if m:
         return m.group(1).strip(), full_text
 
+    # Priority 5: **Answer: X.**
     m = re.search(r'\*\*[Aa]nswer:\s*(.+?)\*\*', full_text)
     if m:
         return m.group(1).strip(), full_text
 
-    # Pattern 3: **X.** (markdown bold ending with period)
-    m = re.search(r'\*\*(.+?)\.\*\*', full_text)
-    if m:
-        ans = m.group(1).strip()
-        if len(ans) > 2 and len(ans) < 200:
-            return ans, full_text
-
-    # Pattern 4: Last substantial line (no ANSWER prefix)
-    for line in reversed(text_clean.split('\n')):
-        line = line.strip().strip('"\': \t')
-        if (line and
-            not re.search(r'ANN?SWER', line, re.IGNORECASE) and
-            line != '<your answer>' and
-            len(line) > 2 and
-            not line.startswith('Based on the provided') and
-            not line.startswith('I need to') and
-            not line.startswith('Let me')):
+    # Priority 6: Last substantial line — avoid verification step text
+    for line in reversed(full_text.split('\n')):
+        line = line.strip()
+        if (line and len(line) > 2 and
+            not re.search(r'ANN?SWER|VERIFICATION|Based on|I need to|Let me', line, re.I) and
+            not line.startswith('Does this information') and
+            line != '<your answer>'):
             return line, full_text
 
     return '', full_text
