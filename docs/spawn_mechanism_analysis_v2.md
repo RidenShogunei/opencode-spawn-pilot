@@ -26,7 +26,9 @@ This bug made ALL historical `subagent_returned` values = 0%. All experiments re
 |------|----------|------------|---------------------|-----------------|
 | **Single** | **23/55 (42%)** | 0% | — | — |
 | Agent-Decides | 17/55 (31%) | 6/55 (11%) | 2/6 (33%) | 1/2 (50%) |
-| Force-Multi | 15/55 (27%) | 42/55 (76%) | 31/42 (74%) | 10/31 (32%) |
+| Force-Multi | 15/55 (27%) | 46/55 (84%) | 35/46 (76%) | 11/35 (31%) |
+
+> ⚠️ **数据修正（2025-05-02）**：之前 results_fm_v12.jsonl 解析时部分任务读取了错误的 run 目录，导致 4 个任务被漏标为未 spawn。修正后 Spawn 率从 76% 升至 84%，Subagent 返回率从 74% 升至 76%。
 
 **Key finding**: Spawn mechanism **hurts** performance on this benchmark. Single outperforms both multi-agent modes despite having no search delegation.
 
@@ -42,11 +44,11 @@ This bug made ALL historical `subagent_returned` values = 0%. All experiments re
 | 4-hop | 5/14 | 36% |
 
 ### Force-Multi (spawn on all tasks)
-| Hop | Spawn Rate | Return Rate | Spawn Acc | Non-Spawn Acc | Return Acc |
+|| Hop | Spawn Rate | Return Rate | Spawn Acc | Non-Spawn Acc | Return Acc |
 |-----|-----------|-------------|-----------|--------------|-----------|
-| 2-hop | 17/26 (65%) | 13/17 (76%) | 24% | 11% | 23% |
-| 3-hop | 14/15 (93%) | 11/14 (79%) | **43%** | 0% | 45% |
-| 4-hop | 11/14 (79%) | 7/11 (64%) | 27% | 33% | 29% |
+| 2-hop | 21/26 (81%) | 17/21 (81%) | 5/21 (24%) | 0/5 (0%) | 4/17 (24%) |
+| 3-hop | 12/13 (92%) | 9/12 (75%) | 5/12 (42%) | 0/1 (0%) | 4/9 (44%) |
+| 4-hop | 13/16 (81%) | 9/13 (69%) | 4/13 (31%) | 1/3 (33%) | 3/9 (33%) |
 
 ### Agent-Decides (model chooses)
 | Hop | Spawn Rate | Return Rate | Spawn Acc |
@@ -69,7 +71,7 @@ This bug made ALL historical `subagent_returned` values = 0%. All experiments re
 | musique_2hop | 18 | 13 (72%) | 11 (85%) | 11% |
 | musique_3hop | 13 | 12 (92%) | 9 (75%) | 38% |
 | musique_4hop | 12 | 9 (75%) | 6 (67%) | 25% |
-| hotpot | 6 | 2 (33%) | 1 (50%) | 50% |
+| hotpot | 6 | 6 (100%) | 5 (83%) | 50% |
 | large (4-hop) | 6 | 6 (100%) | 4 (67%) | 33% |
 
 **Key insight**: musique_2hop has worst accuracy (11%) despite moderate spawn rate. This suggests 2-hop questions are simple enough that search delegation breaks the reasoning chain — the overhead of spawning outweighs the benefit.
@@ -94,11 +96,11 @@ This bug made ALL historical `subagent_returned` values = 0%. All experiments re
 | musique_4hop1__88342_49853_128008_89859 | 4 | ✗ |
 | musique_4hop3__193820_466199_695123_72134 | 4 | ✓ |
 
-- 3/11 correct (27%) — slightly worse than "returned" cases (32%)
+- 3/11 correct (27%) — slightly worse than "returned" cases (31%)
 - The subagent results ARE in context (token injection), but model fails to utilize them
 - This suggests the failure is at the **reasoning/integration** level, not the search level
 
-**True return rate**: 42/42 spawned = **100%** (all injected, only 74% explicitly mentioned)
+**True return rate**: 46/46 spawned = **100%** (all injected, only 76% explicitly mentioned)
 
 ---
 
