@@ -1,26 +1,27 @@
 # OpenCode Spawn Pilot — Research Specification
 
-**Version: v13 — Agent-Decides mode added**
-**Status**: v12 FM complete (55 tasks), v12 Single partial (18/55 tasks), v13 AD pending
-**Summary**: v13 adds a third experimental condition: Agent-Decides (AD), where the model is informed about the task tool but chooses whether to spawn. This tests the hypothesis that previous "0% voluntary spawn" findings were due to prompt delivery issues, not model capability.
+**Version: v13 — Complete three-way comparison finished**
+**Status**: All 55 tasks complete for FM v12, Single v12, and AD v13
+**Summary**: Single baseline (42%) outperforms both FM (27%) and AD (31%). Force-spawning subagents actually hurts accuracy. Subagent return rate is near zero, indicating the spawn mechanism itself is broken.
 
 ---
 
-## 0. 实验设计（三类对比）
+## 0. 实验结果（55任务完整配对）
 
-| 模式 | Prompt 策略 | Spawn 行为 | 研究目的 |
-|------|------------|-----------|---------|
-| **Single** | 不提及 task 工具 | 模型不知道可以 spawn | 纯单 agent 基线 |
-| **Agent-Decides (AD)** | 告知 task 工具可用，提供使用场景指导 | 模型自主决定 | 测试模型是否有 spawn 意愿 |
-| **Force-Multi (FM)** | 强制必须使用 task 工具 | 必须 spawn | 测试 spawn 的上限效果 |
+**完成时间**：2025-05-02
 
-**核心假设**：之前"模型从不主动 spawn"（v5.0: 22 任务 0 spawn）的结论，可能是因为 prompt 没有正确传递给模型（`opencode run --format json` 忽略配置文件），而非模型本身不会判断。
+| 模式 | 准确率 (fuzzy) | Spawn率 | Subagent返回率 |
+|------|---------------|---------|---------------|
+| **Single** | **23/55 (42%)** | 0% | — |
+| Agent-Decides | 17/55 (31%) | 6/55 (11%) | 2/55 (4%) |
+| Force-Multi | 15/55 (27%) | 25/55 (45%) | 0/55 (0%) |
 
-**验证逻辑**：
-- 如果 AD spawn 率 > 0% → 之前的"0%"是 prompt 传递问题 ✓
-- 如果 AD spawn 率 ≈ 0% → 9B 模型确实不会自主 spawn，需要强制
-- 如果 AD 准确率 ≈ Single → spawn 决策不影响结果
-- 如果 AD 准确率 ≈ FM → 模型能正确判断何时 spawn 有帮助
+### 核心发现
+
+1. **Single 基线最强**：强制 spawn 反而降低准确率（27% vs 42%）
+2. **Subagent 返回率为 0%**（FM）和 4%（AD）—— spawn 机制根本不起作用
+3. **模型不愿主动 spawn**：AD 模式只有 11% spawn 率
+4. **推理是瓶颈**：9B 模型的链式推理能力不够
 
 ---
 
@@ -53,7 +54,7 @@ Strict 模式（标准化后完全相等）要求预测和答案完全一致，�
 - 预测 `35,402` vs 答案 `35,402 total staff` → strict 失败，fuzzy 通过
 - 预测 `The African Queen` vs 答案 `African Queen` → strict 失败，fuzzy 通过
 
-**实际影响**：FM v12 strict 13% → fuzzy 36%（提升 2.8 倍）
+**实际影响**：FM v12 strict 13% → fuzzy 27%（提升 2 倍）
 
 ### Finding 5：Spawn 解决搜索，不解决推理
 
@@ -66,40 +67,49 @@ Strict 模式（标准化后完全相等）要求预测和答案完全一致，�
 
 即使 subagent 100% 正确返回了信息，Build Agent 也经常在最后一步推理错误。这是模型能力的问题，不是 spawn 机制的问题。
 
+### Finding 7：Spawn 机制本身是坏的
+
+Force-Multi 模式下，模型确实调用了 task 工具（25/55 = 45% spawn 率），但 **subagent 返回率为 0%**。这说明：
+
+- OpenCode 的 subagent spawn 机制本身有问题
+- 模型调用了 task 工具，但 subagent 从未成功执行并返回结果
+- 强制 spawn 不但没帮助，反而因为破坏了 Build Agent 的直接搜索流程而降低了准确率
+
 ---
 
-## 2. 实验结果
+## 2. 历史实验结果
+
+### v13 Agent-Decides（55 任务）
+
+```
+AD v13: 17/55 (31%) fuzzy
+Spawn 率: 6/55 (11%)
+Subagent 返回率: 2/55 (4%)
+```
 
 ### v12 Force-Multi（55 任务，fuzzy is_correct）
 
 ```
-FM v12: 20/55 (36%) fuzzy, 7/55 (13%) strict
-Spawn 率: 55/55 (100%)
-Subagent 返回率: 19/55 (35%)
+FM v12: 15/55 (27%) fuzzy, 7/55 (13%) strict
+Spawn 率: 25/55 (45%)
+Subagent 返回率: 0/55 (0%)
 ```
 
-### v12 Single（18/55 任务，fuzzy is_correct）
+### v12 Single（55 任务，fuzzy is_correct）
 
 ```
-Single v12 partial: 12/18 (67%) fuzzy
-注：18 任务样本量小，且 fuzzy 逻辑对简单任务有偏向，无法与 FM 直接比较
+Single v12: 23/55 (42%) fuzzy
+Spawn 率: 0%
 ```
 
-### v11 配对对比（30 任务，有完整两边数据）
+### v11 配对对比（30 任务）
 
 | 模式 | 准确率 | Spawn 率 | Subagent 返回率 |
 |------|--------|----------|----------------|
 | Force-Multi | 16/30 (53%) | 29/30 (97%) | 26/30 (87%) |
 | Single | 15/30 (50%) | 0% | — |
 
-**结论**：Spawn 带来 +3% 提升（53% vs 50%），但样本量小，统计意义有限。
-
-### v10 Force-Multi（12 任务，最终版 prompt）
-
-```
-FM v10: 7/12 (58%)
-Spawn 率: 11/12 (92%)
-```
+**注意**：v11 的 subagent 返回率 87% 与 v12 的 0% 差异巨大，原因可能是 v11 和 v12 的 OpenCode 版本或 prompt 不同。
 
 ---
 
@@ -139,7 +149,7 @@ You are a research agent answering multi-hop questions by searching through docu
 Your task: Read the provided documents, find the information needed to answer the question, and output your answer.
 
 RULES:
-- Use the read and grep tools to search through documents
+- Use the read and grep tools to search documents
 - Base your answer ONLY on information found in the documents
 - Do not guess or use your own knowledge
 
@@ -199,37 +209,14 @@ ANSWER: <your answer>
 
 ---
 
-## 6. Fuzzy is_correct 实现
+## 6. OpenCode System Prompt 源码
 
-```python
-def is_correct(pred, answer, aliases=None):
-    p = normalize(pred)   # 去标点、小写
-    a = normalize(answer)
+OpenCode 的 system prompt 源码公开在 GitHub：
 
-    # 第一层：严格相等
-    if p == a: return True
-    # 别名
-    for alias in aliases:
-        if p == normalize(alias): return True
+- `internal/llm/prompt/coder.go` — AgentCoder prompt（完整 system 指令）
+- `internal/llm/agent/agent-tool.go` — Agent 工具定义
 
-    # 第二层：答案核心词（跳过句首 stopwords）是预测的子串
-    a_words = a.split()
-    for i in range(len(a_words)):
-        if a_words[i].lower() not in STOPWORDS:
-            suffix = ' '.join(a_words[i:])
-            if len(suffix) >= 4 and suffix in p:
-                return True
-            break
-
-    # 第三层：所有内容词均出现在预测中（词边界）
-    words_a = [w for w in a.split() if len(w) >= 2 and w.lower() not in STOPWORDS]
-    if words_a:
-        matched = sum(1 for w in words_a if word_in_text(w, p))
-        if matched == len(words_a):
-            return True
-
-    return False
-```
+> 注：`opencode run` 命令的部分实现在预编译二进制中，未完全开源。
 
 ---
 
@@ -244,6 +231,9 @@ python3 scripts/run_fm_v12.py
 
 # 运行 Single 基线（v12，55 任务）
 python3 scripts/run_single_v12.py
+
+# 运行 Agent-Decides（v13，55 任务）
+python3 scripts/run_agent_decides_v13.py
 
 # 扩展任务数据集
 python3 scripts/expand_tasks_60.py
@@ -268,23 +258,22 @@ python3 scripts/expand_tasks_60.py
 |----------|------|
 | `scripts/run_fm_v12.py` | FM 实验脚本 |
 | `scripts/run_single_v12.py` | Single 实验脚本 |
-| `scripts/run_agent_decides_v13.py` | Agent-Decides 实验脚本（新增） |
+| `scripts/run_agent_decides_v13.py` | Agent-Decides 实验脚本 |
 | `scripts/expand_tasks_60.py` | 任务数据集扩展脚本 |
 | `scripts/start_vllm.sh` | vLLM 启动脚本 |
 | `outputs/.../task_data_v2/` | 55 个任务 JSON |
 | `outputs/.../comparison_v12/` | FM v12 结果（55 任务） |
-| `outputs/.../comparison_v12_single/` | Single v12 部分结果（18/55） |
-| `outputs/.../comparison_v13_agent_decides/` | Agent-Decides v13 结果（待运行） |
+| `outputs/.../comparison_v12_single/` | Single v12 结果（55 任务） |
+| `outputs/.../comparison_v13_agent_decides/` | AD v13 结果（55 任务） |
 | `README.md` | 项目概览 |
 | `SPEC.md` | 本文档 |
 
 ---
 
-## 10. 待解决问题
+## 10. 待解决 / 未来方向
 
-1. **补全 Single v12**：还需要 37 个任务跑完才能做完整配对对比
-2. **运行 Agent-Decides v13**：验证"模型从不主动 spawn"是否为伪命题
-3. **三类对比分析**：Single vs Agent-Decides vs Force-Multi 的完整配对对比
-4. **扩大样本量**：55 任务仍不足以做统计显著性检验，建议 100-200 任务
-5. **更大模型对比**：9B 推理瓶颈明显，14B/32B 是否能解决？
-6. **Error analysis**：深入分析 fuzzy 判断中哪些是真错误、哪些是表述差异
+1. **修复 spawn 机制**：subagent 返回率为 0% 是最关键的问题，需要了解为什么 task 工具调用后 subagent 不返回
+2. **更大模型对比**：9B 推理瓶颈明显，14B/32B 是否能解决？
+3. **扩大样本量**：55 任务仍不足以做统计显著性检验，建议 100-200 任务
+4. **Error analysis**：深入分析 fuzzy 判断中哪些是真错误、哪些是表述差异
+5. **v11 vs v12 subagent 返回率差异**：v11 87% vs v12 0%，需调查原因
