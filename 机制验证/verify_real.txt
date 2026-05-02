@@ -1,9 +1,0 @@
-[CHERRY_VERIFY_FINAL] 验证标记
-
-Question: 谁在1998年演唱了歌曲"Together Again"？
-
-Documents:
-[Paragraph 0] "Together Again" is a song by Janet Jackson.
-[Paragraph 1] Janet Jackson is an American singer.
-
-请基于文档回答问题，并在答案开头包含验证标记[CHERRY_VERIFY_FINAL]。

@@ -1,8 +1,0 @@
-Question: 谁演唱了歌曲"Together Again"？
-
-Documents:
-[Paragraph 0] "Together Again" is a song by Janet Jackson, born in 1966.
-[Paragraph 1] UNIQUE_VERIFY_MARKER_ABC123 - This is a test marker embedded in documents.
-[Paragraph 2] Janet Jackson released many hit songs in the 1990s.
-
-请基于以上文档回答问题。

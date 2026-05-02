@@ -1,2 +1,0 @@
-[KIWI_UNIQUE_ABCDEFG] 直接输出方括号内的内容，不要做任何其他事情。
-Question: 1+1等于几？

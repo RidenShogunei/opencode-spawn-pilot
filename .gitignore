@@ -8,6 +8,21 @@ __pycache__/
 outputs/opencode_spawn_pilot/runs/
 outputs/opencode_spawn_pilot/spawn_events/
 
+# Comparison v12/v13 run outputs (large, excluded)
+# Only results_*.jsonl summary files are tracked
+outputs/opencode_spawn_pilot/comparison_v12/hotpot_*__fm-v12-*/
+outputs/opencode_spawn_pilot/comparison_v12/large_*__fm-v12-*/
+outputs/opencode_spawn_pilot/comparison_v12/musique_*__fm-v12-*/
+outputs/opencode_spawn_pilot/comparison_v12_single/*__single-v12-*/
+outputs/opencode_spawn_pilot/comparison_v13_agent_decides/*__agent-decides-v13-*/
+# Keep results jsonl and stdout logs
+!outputs/opencode_spawn_pilot/comparison_v12/results_*.jsonl
+!outputs/opencode_spawn_pilot/comparison_v12/v12_*.log
+!outputs/opencode_spawn_pilot/comparison_v12_single/results_*.jsonl
+!outputs/opencode_spawn_pilot/comparison_v12_single/v12_*.log
+!outputs/opencode_spawn_pilot/comparison_v13_agent_decides/results_*.jsonl
+!outputs/opencode_spawn_pilot/comparison_v13_agent_decides/v13_*.log
+
 # Experiment runs (large, excluded)
 outputs/opencode_spawn_pilot/prompt_variants/
 outputs/opencode_spawn_pilot/prompt_variants_v2/v1_forced*/
