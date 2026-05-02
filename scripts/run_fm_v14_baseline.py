@@ -219,25 +219,26 @@ ANSWER: """
     # Write prompt to file (model reads via @/path syntax)
     prompt_file.write_text(full_prompt, encoding='utf-8')
 
-    # FIXED: No 'script' wrapper — direct stdout/stderr redirection
-    cmd = [
+    # Use 'script' for PTY (correct model behavior) + communicate() for complete capture
+    opencode_cmd = ' '.join([
         OPENCODE, 'run',
         '--model', MODEL,
         '--format', 'json',
         '--title', task_id,
         '--message', f'@{prompt_file.absolute()}'
-    ]
+    ])
+    cmd = ['script', '-q', '-c', opencode_cmd, '/dev/null']
 
     try:
-        with open(output_file, 'wb') as fout, open(log_file, 'wb') as ferr:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=fout,
-                stderr=ferr,
-                cwd=str(run_dir)
-            )
-            exit_code = proc.communicate(timeout=600)
-        output_text = output_file.read_text(errors='replace') if output_file.exists() else ''
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=str(run_dir)
+        )
+        output_bytes, _ = proc.communicate(timeout=600)
+        output_file.write_bytes(output_bytes)
+        output_text = output_bytes.decode('utf-8', errors='replace')
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.communicate()
