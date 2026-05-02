@@ -25,10 +25,10 @@ This bug made ALL historical `subagent_returned` values = 0%. All experiments re
 | Mode | Accuracy | Spawn Rate | Subagent Return Rate | Return Accuracy |
 |------|----------|------------|---------------------|-----------------|
 | **Single** | **23/55 (42%)** | 0% | — | — |
-| Agent-Decides | 17/55 (31%) | 6/55 (11%) | 2/6 (33%) | 1/2 (50%) |
-| Force-Multi | 15/55 (27%) | 46/55 (84%) | 35/46 (76%) | 11/35 (31%) |
+| Agent-Decides | 17/55 (31%) | 6/55 (11%) | 6/6 (100%) | 2/6 (33%) |
+| Force-Multi | 15/55 (27%) | 46/55 (84%) | 46/46 (100%) | 11/46 (24%) |
 
-> ⚠️ **数据修正（2025-05-02）**：之前 results_fm_v12.jsonl 解析时部分任务读取了错误的 run 目录，导致 4 个任务被漏标为未 spawn。修正后 Spawn 率从 76% 升至 84%，Subagent 返回率从 74% 升至 76%。
+> ⚠️ **数据修正（2025-05-02）**：之前 results_fm_v12.jsonl 解析时部分任务读取了错误的 run 目录，导致 4 个任务被漏标为未 spawn。修正后 Spawn 率从 76% 升至 84%。Subagent 返回率 = 100%（token delta 验证）。
 
 **Key finding**: Spawn mechanism **hurts** performance on this benchmark. Single outperforms both multi-agent modes despite having no search delegation.
 
