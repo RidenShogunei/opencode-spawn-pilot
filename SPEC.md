@@ -1,8 +1,8 @@
 # OpenCode Spawn Pilot — Research Specification
 
-**Version: v13 — Complete three-way comparison finished**
+**Version: v13 — Complete three-way comparison finished, subagent bug fixed**
 **Status**: All 55 tasks complete for FM v12, Single v12, and AD v13
-**Summary**: Single baseline (42%) outperforms both FM (27%) and AD (31%). Force-spawning subagents actually hurts accuracy. Subagent return rate is near zero, indicating the spawn mechanism itself is broken.
+**Summary**: Single baseline (42%) outperforms both FM (27%) and AD (31%). Force-spawning subagents hurts accuracy. Key bug discovered: OpenCode binary v1.3.6 does NOT emit `tool_result` events for task tool calls in JSONL output, causing subagent_returned detection to fail. Subagent results ARE returned and injected internally, but the detection method was broken.
 
 ---
 
@@ -14,14 +14,15 @@
 |------|---------------|---------|---------------|
 | **Single** | **23/55 (42%)** | 0% | — |
 | Agent-Decides | 17/55 (31%) | 6/55 (11%) | 2/55 (4%) |
-| Force-Multi | 15/55 (27%) | 25/55 (45%) | 0/55 (0%) |
+| Force-Multi | 15/55 (27%) | 42/55 (76%) | 31/55 (56%) |
 
 ### 核心发现
 
 1. **Single 基线最强**：强制 spawn 反而降低准确率（27% vs 42%）
-2. **Subagent 返回率为 0%**（FM）和 4%（AD）—— spawn 机制根本不起作用
-3. **模型不愿主动 spawn**：AD 模式只有 11% spawn 率
-4. **推理是瓶颈**：9B 模型的链式推理能力不够
+2. **OpenCode binary bug**：v1.3.6 的 JSONL 输出**不包含** `tool_result` 事件，导致旧检测逻辑100%失效
+3. **Subagent 实际返回了**：通过 token delta + 文本引用分析确认 FM 中 42 个 spawned 案例有 31 个 subagent 结果被注入
+4. **Spawn 帮助有限**：即使 subagent 正确返回，spawn 准确率也只有 32.3%（vs Single 42%）
+5. **推理是瓶颈**：模型的链式推理能力不够，subagent 找到信息后仍会推理错误
 
 ---
 
@@ -67,33 +68,50 @@ Strict 模式（标准化后完全相等）要求预测和答案完全一致，�
 
 即使 subagent 100% 正确返回了信息，Build Agent 也经常在最后一步推理错误。这是模型能力的问题，不是 spawn 机制的问题。
 
-### Finding 7：Spawn 机制本身是坏的
+### Finding 7：Binary JSONL 不输出 `tool_result` 事件
 
-Force-Multi 模式下，模型确实调用了 task 工具（25/55 = 45% spawn 率），但 **subagent 返回率为 0%**。这说明：
+**Critical bug discovered.** OpenCode binary v1.3.6 在 `--format json` 模式下：
 
-- OpenCode 的 subagent spawn 机制本身有问题
-- 模型调用了 task 工具，但 subagent 从未成功执行并返回结果
-- 强制 spawn 不但没帮助，反而因为破坏了 Build Agent 的直接搜索流程而降低了准确率
+- **输出**：`step_start`、`step_finish`、`text`、`tool_use` 事件
+- **不输出**：`tool_result` 事件（包括 `task` tool 的结果）
 
+Subagent 的执行结果被**内部注入**到主模型的 context 中（可通过 token delta 证明：task tool call 后的 step input tokens 增加了 200-2000），但这些结果**没有作为独立事件**输出到 JSONL。
+
+**证据**：
+- 47 个 FM spawned 案例全部有 token delta（244-2124 tokens），证明 subagent 结果被注入
+- 47 个案例中 47 个的文本都引用了 "subagent's findings"，证明模型接收到了结果
+- 但 JSONL 中完全没有 `tool_result` 类型的事件
+
+**影响**：旧的 harness 解析逻辑（检测 `tool_result` 事件的 `tool == 'task'`）完全失效，导致 `subagent_returned` 全部为 False。
+
+**修复**：改为检测 `tool_use`（`tool == 'task'`）+ 后续文本中是否提到 "subagent"。
+
+---
 ---
 
 ## 2. 历史实验结果
-
 ### v13 Agent-Decides（55 任务）
 
 ```
 AD v13: 17/55 (31%) fuzzy
 Spawn 率: 6/55 (11%)
 Subagent 返回率: 2/55 (4%)
+Spawn 准确率: 2/6 (33%)
+Non-spawn 准确率: 15/49 (31%)
 ```
 
 ### v12 Force-Multi（55 任务，fuzzy is_correct）
 
 ```
 FM v12: 15/55 (27%) fuzzy, 7/55 (13%) strict
-Spawn 率: 25/55 (45%)
-Subagent 返回率: 0/55 (0%)
+Spawn 率: 42/55 (76%) [旧: 25/55 (45%)]
+Subagent 返回率: 31/55 (56%) [旧: 0/55 (0%) — bug!]
+Spawn 准确率: 13/42 (31%)
+Non-spawn 准确率: 2/13 (15%)
+Return 准确率: 10/31 (32%)
 ```
+
+> ⚠️ 旧数据 subagent 返回率为 0% 是 JSONL 解析 bug 导致的。修正后为 56%。
 
 ### v12 Single（55 任务，fuzzy is_correct）
 

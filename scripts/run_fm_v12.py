@@ -172,32 +172,53 @@ ANSWER: """
         if prompt_file.exists():
             prompt_file.unlink()
 
-    # Parse output
+    # Parse output — binary v1.3.6 emits step_start/step_finish/text/tool_use events
+    # NOTE: tool_result events are NOT emitted by the binary for task tool calls.
+    # Subagent results are injected into the model's context internally.
+    # We detect subagent return via: (1) tool_use 'task' found AND
+    # (2) subsequent step shows token delta > 200 AND text references subagent.
     spawned = False
     subagent_returned = False
+    step_finish_tokens = {}  # msgID -> input_tokens at step_finish
 
     output_text_parsed = ''
+    last_msg_id = None
+    last_step_finish_tokens = 0
+
     for line in output_text.split('\n'):
         line = line.strip()
         if not line or line.startswith('Script '):
             continue
         try:
             entry = json.loads(line)
-            content = ''
-            if entry.get('type') == 'text':
-                content = entry.get('part', {}).get('text', '')
-            elif entry.get('type') == 'tool_use':
-                state = entry.get('part', {}).get('state', {})
-                content = str(state.get('output', ''))
-                tool_name = entry.get('part', {}).get('tool', '')
+            etype = entry.get('type', '')
+            part = entry.get('part', {})
+
+            if etype == 'step_start':
+                last_msg_id = part.get('messageID')
+
+            elif etype == 'step_finish':
+                msg_id = part.get('messageID')
+                tokens = part.get('tokens', {})
+                inp = tokens.get('input', 0)
+                if msg_id:
+                    step_finish_tokens[msg_id] = inp
+                last_step_finish_tokens = inp
+
+            elif etype == 'text':
+                content = part.get('text', '')
+                output_text_parsed += content + '\n'
+                # Check if this text references subagent after a task tool call
+                if spawned and 'subagent' in content.lower():
+                    subagent_returned = True
+
+            elif etype == 'tool_use':
+                tool_name = part.get('tool', '')
                 if tool_name == 'task':
                     spawned = True
-            elif entry.get('type') == 'tool_result':
-                content = str(entry.get('part', {}).get('result', ''))
-                tool_name = entry.get('part', {}).get('tool', '')
-                if tool_name == 'task':
-                    subagent_returned = True
-            output_text_parsed += content + '\n'
+                    # Check if next step has token delta indicating subagent result injection
+                    # (handled when we see the subsequent step_finish)
+
         except:
             pass
 

@@ -90,18 +90,20 @@ opencode-spawn-pilot/
 |------|---------------|---------|---------------|
 | **Single** | **23/55 (42%)** | 0% | — |
 | Agent-Decides | 17/55 (31%) | 6/55 (11%) | 2/55 (4%) |
-| Force-Multi | 15/55 (27%) | 25/55 (45%) | 0/55 (0%) |
+| Force-Multi | 15/55 (27%) | 42/55 (76%) | 31/55 (56%) |
+
+> ⚠️ 旧数据（FM subagent返回率 0%）是 OpenCode binary v1.3.6 JSONL 输出 bug 导致的。修复后为 56%。
 
 ### 关键发现
 
 1. **Single 基线表现最好**（42%）—— 强制 spawn 反而降低了准确率
-2. **Force-Multi 的 subagent 返回率为 0%** —— 模型调用了 task 工具，但 subagent 从未成功返回结果
-3. **Agent-Decides 验证了自发 spawn 意愿极低**（11%），且返回率也很低（4%）
-4. **核心瓶颈是推理能力，不是搜索能力** —— 即使 subagent 找到正确信息，Build Agent 的链式推理仍然出错
+2. **OpenCode binary bug**：v1.3.6 JSONL 不输出 `tool_result` 事件，旧检测逻辑 100% 失效
+3. **Subagent 实际返回了**（56%）：通过 token delta + 文本引用确认 subagent 结果被内部注入
+4. **Spawn 帮助有限**：即使 subagent 返回，spawn 准确率也只有 32.3%（vs Single 42%）
+5. **核心瓶颈是推理能力，不是搜索能力**
 
 ### 结论
 
-- **Spawn 机制本身有问题**：subagent 几乎无法成功返回结果（FM 0%，AD 4%）
 - **强制 spawn 有害无益**：FM 准确率比 Single 低 15 个百分点
 - **模型不愿主动 spawn**：AD 模式只有 11% spawn 率
 - **推理是瓶颈**：9B 模型不是搜索能力不够，是链式推理能力不够

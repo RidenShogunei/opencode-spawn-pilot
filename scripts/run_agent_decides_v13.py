@@ -234,6 +234,9 @@ ANSWER: """
     raw_output_file.write_text(output_text, encoding='utf-8')
 
     # Parse output: extract text and detect spawn events
+    # NOTE: binary v1.3.6 does NOT emit tool_result events for task tool calls.
+    # Subagent results are injected into the model's context internally.
+    # We detect subagent return via text references to "subagent" after a task tool call.
     spawned = False
     subagent_returned = False
     output_text_parsed = ''
@@ -244,23 +247,21 @@ ANSWER: """
             continue
         try:
             entry = json.loads(line)
-            content = ''
-            if entry.get('type') == 'text':
-                content = entry.get('part', {}).get('text', '')
-            elif entry.get('type') == 'tool_use':
-                state = entry.get('part', {}).get('state', {})
-                content = str(state.get('output', ''))
-                # Check if this is a task tool call (spawn)
-                tool_name = entry.get('part', {}).get('tool', '')
+            etype = entry.get('type', '')
+            part = entry.get('part', {})
+
+            if etype == 'text':
+                content = part.get('text', '')
+                output_text_parsed += content + '\n'
+                # Check if text references subagent after spawning
+                if spawned and 'subagent' in content.lower():
+                    subagent_returned = True
+
+            elif etype == 'tool_use':
+                tool_name = part.get('tool', '')
                 if tool_name == 'task':
                     spawned = True
-            elif entry.get('type') == 'tool_result':
-                content = str(entry.get('part', {}).get('result', ''))
-                # Check if this is a task result (subagent returned)
-                tool_name = entry.get('part', {}).get('tool', '')
-                if tool_name == 'task':
-                    subagent_returned = True
-            output_text_parsed += content + '\n'
+
         except:
             pass
 
