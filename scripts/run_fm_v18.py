@@ -237,26 +237,25 @@ ANSWER: """
         '--message', f'@{prompt_file.absolute()}'
     ]
 
+    # Use script -q -c for PTY (required: opencode doesn't write to pipes without TTY)
+    opencode_cmd = ' '.join(cmd)
+    wrapped_cmd = ['script', '-q', '-c', opencode_cmd, '/dev/null']
+
     output_text = ''
     try:
-        # File-based subprocess (no pipe deadlock)
         output_file = run_dir / 'opencode_raw_output.jsonl'
-        with open(output_file, 'wb') as fh:
-            proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.DEVNULL,
-                stdout=fh,
-                stderr=subprocess.STDOUT,
-                cwd=str(run_dir),
-                start_new_session=True
-            )
-            # Wait up to 300 seconds
-            try:
-                proc.wait(timeout=300)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-        output_bytes = output_file.read_bytes()
+        proc = subprocess.Popen(
+            wrapped_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=str(run_dir)
+        )
+        try:
+            output_bytes, _ = proc.communicate(timeout=600)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            output_bytes, _ = proc.communicate()
+        output_file.write_bytes(output_bytes)
         output_text = output_bytes.decode('utf-8', errors='replace')
     except Exception:
         pass
