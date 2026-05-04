@@ -4,16 +4,6 @@ OpenCode Spawn Pilot v20 — Baseline on 97-task dataset.
 Uses v15's proven 3-step verification prompt.
 Task data: task_data_v3 (97 tasks). Goal: new baseline for larger dataset.
 """
-   - Agent must explicitly state: (1) what subagent found, (2) does it answer the question
-   - Only if verification passes can agent give the final answer
-2. This prevents the "jump to answer" failure mode where agent skips reasoning
-
-v14 had: Agent spawns subagent, then directly gives answer (often wrong)
-v15 has: Agent spawns subagent, then MUST write verification steps before answering
-
-Hypothesis: 2-hop tasks have correct subagent output but agent jumps to wrong answer.
-Adding verification will force the agent to check subagent quality before committing.
-"""
 import subprocess, json, time, sys, re, os
 from pathlib import Path
 
