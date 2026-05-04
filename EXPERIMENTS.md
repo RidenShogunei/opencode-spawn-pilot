@@ -152,7 +152,7 @@ for hop in ['2hop', '3hop', '4hop']:
 | v15 | 基线：3 步验证 (a/b/c) | 40.0% | ✅ 当前基线 |
 | v17 | 结构化子 agent 格式 (FOUND/SOURCE/CONFIDENCE) | 18% | ❌ 过度结构化 |
 | v18 | 回退 v15 + paste paragraphs | 0% | ❌ 占位符导致困惑 |
-| v19 | 单句 Finding + 强制 ANSWER | ? | 测试中 |
+| v19 | 单句 Finding + 强制 ANSWER | 38.2% (21/55) | 与基线持平，无显著效果 |
 
 ---
 
