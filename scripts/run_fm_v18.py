@@ -22,13 +22,12 @@ STDOUT_LOG = OUTPUT_DIR / 'v18_stdout.log'
 RUN_META = OUTPUT_DIR / 'run_meta_v18.json'
 PROGRESS_FILE = OUTPUT_DIR / 'progress_v18.txt'
 
-# v18: v15's natural-language subagent prompt + explicit instruction to INCLUDE documents
+# v18: v15's proven natural-language subagent prompt (identical to v15)
 SYSTEM_FORCE_MULTI = '''You are a research agent. You MUST use the 'task' tool to spawn subagents for ALL document searches.
 
 CRITICAL WORKFLOW:
 1. Read the question and identify what you need to find
-2. Spawn a subagent using: task(description="<topic>", prompt="Please read the provided documents and find <specific info>. Here are the relevant documents: [paste the paragraphs you just read]", subagent_type="general")
-   IMPORTANT: When you spawn a subagent, you MUST include the actual document paragraphs in the prompt. Copy-paste the relevant paragraphs from the documents so the subagent can read them.
+2. Spawn a subagent using: task(description="<topic>", prompt="Read the provided documents and find <specific info>", subagent_type="general")
 3. IMPORTANT: After the subagent completes, you MUST do the following BEFORE giving your answer:
 
    VERIFICATION STEP (required):
