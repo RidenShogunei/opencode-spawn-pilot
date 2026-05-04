@@ -226,18 +226,19 @@ ANSWER: """
 
     full_prompt = f'{SYSTEM_FORCE_MULTI}\n\n---\n\n{user_prompt}'
 
-    # Build prompt and pass as JSON-encoded string to --message
-    # (--format json doesn't resolve @filepath, must pass content directly)
-    message_json = json.dumps(full_prompt)
-    # Write to script file to avoid escaping issues with script -c
-    script_path = run_dir / 'run_opencode.sh'
-    script_path.write_text(f'''#!/bin/bash
-cd "{run_dir}"
-exec {OPENCODE} run --model {MODEL} --format json --title {task_id} --message {message_json}
-''')
-    script_path.chmod(0o755)
+    # Write prompt to file (v15 approach: @filepath works with script PTY)
+    prompt_file = OUTPUT_DIR / f'.prompt_{task_id}_{run_id}.txt'
+    prompt_file.write_text(full_prompt, encoding='utf-8')
 
-    wrapped_cmd = ['script', '-q', '-c', str(script_path), '/dev/null']
+    # Use script -q -c for PTY (v15 proven: model spawns correctly with this)
+    opencode_cmd = ' '.join([
+        OPENCODE, 'run',
+        '--model', MODEL,
+        '--format', 'json',
+        '--title', task_id,
+        '--message', f'@{prompt_file.absolute()}'
+    ])
+    wrapped_cmd = ['script', '-q', '-c', opencode_cmd, '/dev/null']
 
     output_text = ''
     try:
@@ -258,9 +259,8 @@ exec {OPENCODE} run --model {MODEL} --format json --title {task_id} --message {m
     except Exception:
         pass
     finally:
-        # Clean up shell script
-        if script_path.exists():
-            script_path.unlink()
+        if prompt_file.exists():
+            prompt_file.unlink()
 
     if not output_text:
         return {
