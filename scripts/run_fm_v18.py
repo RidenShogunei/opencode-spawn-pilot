@@ -226,20 +226,18 @@ ANSWER: """
 
     full_prompt = f'{SYSTEM_FORCE_MULTI}\n\n---\n\n{user_prompt}'
 
-    prompt_file = OUTPUT_DIR / f'.prompt_{task_id}_{run_id}.txt'
-    prompt_file.write_text(full_prompt, encoding='utf-8')
+    # Build prompt and pass as JSON-encoded string to --message
+    # (--format json doesn't resolve @filepath, must pass content directly)
+    message_json = json.dumps(full_prompt)
+    # Write to script file to avoid escaping issues with script -c
+    script_path = run_dir / 'run_opencode.sh'
+    script_path.write_text(f'''#!/bin/bash
+cd "{run_dir}"
+exec {OPENCODE} run --model {MODEL} --format json --title {task_id} --message {message_json}
+''')
+    script_path.chmod(0o755)
 
-    cmd = [
-        OPENCODE, 'run',
-        '--model', MODEL,
-        '--format', 'json',
-        '--title', task_id,
-        '--message', f'@{prompt_file.absolute()}'
-    ]
-
-    # Use script -q -c for PTY (required: opencode doesn't write to pipes without TTY)
-    opencode_cmd = ' '.join(cmd)
-    wrapped_cmd = ['script', '-q', '-c', opencode_cmd, '/dev/null']
+    wrapped_cmd = ['script', '-q', '-c', str(script_path), '/dev/null']
 
     output_text = ''
     try:
@@ -260,8 +258,9 @@ ANSWER: """
     except Exception:
         pass
     finally:
-        if prompt_file.exists():
-            prompt_file.unlink()
+        # Clean up shell script
+        if script_path.exists():
+            script_path.unlink()
 
     if not output_text:
         return {
