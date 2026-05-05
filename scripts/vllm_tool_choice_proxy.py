@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-Proxy: forces tool_choice="required" on FIRST call per task.
-Counter resets via GET /reset. Harness calls /reset between tasks.
+Proxy: forces tool call on first 2 turns, then frees model to answer.
+- GET /reset → reset per-task counter
+- Turn 1-2: tool_choice="required" → model MUST call some tool
+- Turn 3+: no tool_choice → model can answer with text
 """
 import json, sys, threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -10,6 +12,7 @@ import urllib.request
 UPSTREAM = "http://127.0.0.1:8010"
 call_count = 0
 lock = threading.Lock()
+FORCE_TURNS = 2  # force tool_choice for first 2 requests
 
 class ProxyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -20,7 +23,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"OK")
-            print("[proxy] COUNTER RESET", flush=True)
+            return
+        elif self.path == "/health":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
             return
         self._proxy("GET")
 
@@ -39,15 +46,17 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     call_count += 1
                     cn = call_count
                 
-                if cn == 1:
+                if cn <= FORCE_TURNS:
                     data["tool_choice"] = "required"
-                    print(f"[proxy] CALL#{cn} FORCED", flush=True)
+                    print(f"[proxy] turn #{cn} → tool_choice=required", flush=True)
                 else:
-                    print(f"[proxy] CALL#{cn} normal", flush=True)
+                    if "tool_choice" in data:
+                        del data["tool_choice"]
+                    print(f"[proxy] turn #{cn} → FREE (no tool_choice)", flush=True)
                 
                 body = json.dumps(data).encode('utf-8')
-            except:
-                pass
+            except Exception as e:
+                print(f"[proxy] ERROR: {e}", flush=True)
 
         url = UPSTREAM + self.path
         req = urllib.request.Request(url, data=body, method=method)
@@ -75,5 +84,5 @@ if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8011
     server = HTTPServer(("127.0.0.1", port), ProxyHandler)
     print(f"Proxy on 127.0.0.1:{port} → {UPSTREAM}", flush=True)
-    print("GET /reset between tasks, tool_choice=required on CALL#1", flush=True)
+    print(f"Force tool_choice for first {FORCE_TURNS} turns, then free", flush=True)
     server.serve_forever()

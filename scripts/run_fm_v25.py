@@ -25,7 +25,8 @@ CRITICAL WORKFLOW:
 2. Spawn a subagent using: task(description="topic", prompt="Read the provided documents and find specific info", subagent_type="general")
 3. After the subagent completes, verify the answer before giving your final response
 
-ANSWER: your verified answer'''
+FINAL ANSWER FORMAT: When you are ready to answer, write EXACTLY:
+**ANSWER: <your answer>**'''
 
 
 def load_tasks():
@@ -105,10 +106,28 @@ def extract_answer_from_jsonl_events(events):
     for line in reversed(full_text.split('\n')):
         line = line.strip()
         if (line and len(line) > 2 and
-            not re.search(r'ANN?SWER|VERIFICATION|Based on|I need to|Let me', line, re.I) and
+            not re.search(r'ANN?SWER|VERIFICATION|I need to|Let me', line, re.I) and
             not line.startswith('Does this information') and
+            not line.startswith('Based on the') and
             line != '<your answer>'):
             return line, full_text
+
+    # Priority 7: Last **bold text** in the full text (model often bolds the answer)
+    bold_matches = re.findall(r'\*\*(.+?)\*\*', full_text)
+    if bold_matches:
+        return bold_matches[-1].strip(), full_text
+
+    # Priority 8: Last line starting with "Based on" — extract bold if present
+    for line in reversed(full_text.split('\n')):
+        line = line.strip()
+        if line.startswith('Based on'):
+            bolds = re.findall(r'\*\*(.+?)\*\*', line)
+            if bolds:
+                return bolds[-1].strip(), full_text
+            # Otherwise just take the "as **X**" or "is **X**" pattern
+            m = re.search(r'(?:as|is|role)\s+\*?\*?(.+?)\*?\*?\s*(?:in|\.|$)', line)
+            if m:
+                return m.group(1).strip(), full_text
 
     return '', full_text
 
