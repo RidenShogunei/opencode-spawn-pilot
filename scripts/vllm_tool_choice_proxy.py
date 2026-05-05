@@ -1,29 +1,50 @@
 #!/usr/bin/env python3
 """
-Proxy: globally forces tool_choice="required". 
-Main agent → forced to call tool, prompt says "task" so should call task().
-Subagent → forced to call tool, normally calls read/bash — fine.
+Proxy: forces tool_choice="required" on FIRST call per task.
+Counter resets via GET /reset. Harness calls /reset between tasks.
 """
-import json, sys
+import json, sys, threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import urllib.request
 
 UPSTREAM = "http://127.0.0.1:8010"
+call_count = 0
+lock = threading.Lock()
 
 class ProxyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        global call_count
+        if self.path == "/reset":
+            with lock:
+                call_count = 0
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+            print("[proxy] COUNTER RESET", flush=True)
+            return
         self._proxy("GET")
+
     def do_POST(self):
         self._proxy("POST")
 
     def _proxy(self, method):
+        global call_count
         cl = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(cl) if cl > 0 else b''
 
         if self.path == "/v1/chat/completions" and body:
             try:
                 data = json.loads(body)
-                data["tool_choice"] = "required"
+                with lock:
+                    call_count += 1
+                    cn = call_count
+                
+                if cn == 1:
+                    data["tool_choice"] = "required"
+                    print(f"[proxy] CALL#{cn} FORCED", flush=True)
+                else:
+                    print(f"[proxy] CALL#{cn} normal", flush=True)
+                
                 body = json.dumps(data).encode('utf-8')
             except:
                 pass
@@ -54,5 +75,5 @@ if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8011
     server = HTTPServer(("127.0.0.1", port), ProxyHandler)
     print(f"Proxy on 127.0.0.1:{port} → {UPSTREAM}", flush=True)
-    print("tool_choice=required GLOBAL", flush=True)
+    print("GET /reset between tasks, tool_choice=required on CALL#1", flush=True)
     server.serve_forever()

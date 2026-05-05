@@ -6,7 +6,7 @@ Key change from v21: OpenCode → proxy(8011) → vLLM(8010).
 Proxy injects tool_choice="required" into every API call, forcing
 the model to always call a tool — no more "I'll read" + stop.
 """
-import subprocess, json, time, sys, re, os
+import subprocess, json, time, sys, re, os, urllib.request
 from pathlib import Path
 
 OPENCODE = '/home/jinxu/.opencode/bin/opencode'
@@ -201,8 +201,11 @@ def run_fm_task(task, run_id):
     aliases = task.get('answer_aliases', [])
     docs = build_docs(task)
 
-    run_dir = OUTPUT_DIR / f'{task_id}__fm-v21-{run_id}'
+    run_dir = OUTPUT_DIR / f'{task_id}__fm-v25-{run_id}'
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    # Reset proxy counter before each task
+    urllib.request.urlopen("http://127.0.0.1:8011/reset")
 
     docs_file = run_dir / 'documents.txt'
     docs_file.write_text(docs, encoding='utf-8')
