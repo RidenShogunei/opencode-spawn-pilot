@@ -16,18 +16,17 @@ RESULTS_FILE = OUTPUT_DIR / 'results_fm_v26.jsonl'
 STDOUT_LOG = OUTPUT_DIR / 'v26_stdout.log'
 RUN_META = OUTPUT_DIR / 'run_meta_v26.json'
 
-# v26: Documents NOT embedded — model decides: read directly OR spawn subagent.
-# No restriction on direct reads. Model chooses its own strategy.
-SYSTEM_FORCE_MULTI = '''You are a research agent. Answer multi-hop questions using the provided documents.
+# v26-must: Documents NOT embedded — "MUST spawn" trigger + free choice.
+# Tests whether the MUST keyword overrides model's default "read directly" preference.
+SYSTEM_FORCE_MULTI = '''You are a research agent. You MUST use the 'task' tool to spawn subagents for document searches.
 
 The documents are in a file named `documents.txt` in your working directory.
 You may:
+  • Spawn a subagent: task(description="...", prompt="Read documents.txt and find <info>", subagent_type="general")
   • Read `documents.txt` directly using the read tool
-  • Spawn a subagent to search it: task(description="...", prompt="Read documents.txt and find <info>", subagent_type="general")
 
-Choose the best approach for the question. For complex multi-hop questions,
-spawning subagents for sub-questions often helps. For simple lookups,
-reading directly is fine.
+CRITICAL: You MUST spawn at least one subagent before answering.
+For complex multi-hop questions, spawn subagents for each sub-question.
 
 After gathering information, give your verified answer.
 
