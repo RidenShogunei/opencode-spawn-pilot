@@ -54,6 +54,25 @@ ANSWER: <answer>
 
 FALLBACK: If the task tool is unavailable, read the documents above directly and answer.'''
 
+SYSTEM_DECIDE = '''You are a research agent. You have access to tools: read, task (spawn subagents), grep.
+For complex multi-hop questions, you may spawn subagents to decompose the problem.
+For simple questions, answer directly. You decide the best strategy.'''
+
+USER_DECIDE = '''===== DOCUMENTS =====
+{docs}
+
+===== QUESTION =====
+{question}
+
+===== INSTRUCTIONS =====
+1. The answer IS guaranteed to be in the documents above. Do NOT say "not found".
+2. You may:
+   - Answer directly from the documents, OR
+   - Spawn subagent(s) to help — one per sub-question if the problem has multiple hops
+3. Choose the strategy that gives the most accurate answer.
+4. Output EXACTLY one line:
+ANSWER: <your answer>'''
+
 
 # ── Core functions ───────────────────────────────────────────
 
@@ -201,9 +220,12 @@ def run_one(task, arm, model):
     if arm == 'direct':
         system = SYSTEM_DIRECT
         user = USER_DIRECT.format(docs=docs, question=question)
-    else:  # spawn
+    elif arm == 'spawn':
         system = SYSTEM_SPAWN
         user = USER_SPAWN.format(docs=docs, question=question)
+    else:  # decide
+        system = SYSTEM_DECIDE
+        user = USER_DECIDE.format(docs=docs, question=question)
 
     full_prompt = f'{system}\n\n{user}'
     prompt_file = run_dir / '.prompt.txt'
@@ -239,10 +261,9 @@ def run_one(task, arm, model):
     events = parse_raw_output(output_text)
 
     # Track tool usage
-    spawned = any(
-        e.get('type') == 'tool_use' and e.get('part', {}).get('tool') == 'task'
-        for e in events
-    )
+    task_events = [e for e in events if e.get('type') == 'tool_use' and e.get('part', {}).get('tool') == 'task']
+    spawned = len(task_events) > 0
+    subagent_count = len(task_events)
     used_read = any(
         e.get('type') == 'tool_use' and e.get('part', {}).get('tool') == 'read'
         for e in events
@@ -257,6 +278,7 @@ def run_one(task, arm, model):
         'predicted': predicted,
         'answer': answer,
         'spawned': spawned,
+        'subagent_count': subagent_count,
         'used_read': used_read,
         'output_len': len(output_text),
         'event_count': len(events),
@@ -267,7 +289,7 @@ def run_one(task, arm, model):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('arm', nargs='?', default='direct', choices=['direct', 'spawn'])
+    ap.add_argument('arm', nargs='?', default='direct', choices=['direct', 'spawn', 'decide'])
     ap.add_argument('--model', default=DEFAULT_MODEL)
     args = ap.parse_args()
     model = args.model
