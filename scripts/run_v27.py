@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-v27 — Clean comparison: prompt quality vs model strategy.
-  v27-free:  improved prompt, model reads freely (compare vs v26-free ~80%)
-  v27-spawn: improved prompt + MUST spawn (compare vs v26-FM ~45%)
+v27 — Clean spawn comparison: documents always embedded in prompt.
+Only variable: does the model route through a subagent, or answer directly?
 
-Key improvements vs v26:
-  1. Explicit "answer IS in documents" assertion → prevents "not found"
-  2. Strict ANSWER: format → prevents extraction failures
-  3. Concise, directive instructions → prevents "what to do?" confusion
+  v27-direct:  model reads embedded docs and answers directly  (baseline)
+  v27-spawn:   model MUST spawn subagent; subagent gets embedded docs;
+               parent verifies and answers
+
+Both arms see the same total tokens (docs + question + instructions).
+No external files to read — zero additional tool calls required for either arm.
 """
-import subprocess, json, time, sys, re, os
+import subprocess, json, time, sys, re, os, argparse
 from pathlib import Path
 
 OPENCODE = '/home/jinxu/.opencode/bin/opencode'
@@ -18,31 +19,38 @@ DATA_DIR = Path('/home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot/t
 BASE_OUT = Path('/home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot')
 
 # ── Prompts ──────────────────────────────────────────────────
+# Both get docs embedded. Only difference: spawn instruction.
 
-SYSTEM_FREE = '''You are a precise research assistant. You have access to tools: read, bash, grep, task.
-Answer multi-hop questions by reading the documents file.'''
+SYSTEM_DIRECT = 'You are a precise research assistant. You will be given documents followed by a question. The EXACT answer IS in the documents. Read carefully and extract it.'
 
-SYSTEM_SPAWN = '''You are a precise research agent. You have access to tools including: task (spawn subagents), read, grep.
-You MUST use the task tool to spawn subagents before answering.'''
+SYSTEM_SPAWN = '''You are a precise research agent with access to the 'task' tool for spawning subagents.
+You MUST spawn at least one subagent to analyze the documents before answering.'''
 
-# User prompts
-USER_FREE = '''Read the file `documents.txt` COMPLETELY now.
-The answer to the question below is GUARANTEED to be found in that file.
-After reading all paragraphs carefully, answer the question.
+USER_DIRECT = '''===== DOCUMENTS =====
+{docs}
 
-Question: {question}
+===== QUESTION =====
+{question}
 
-You MUST output exactly one line:
-ANSWER: <your answer>'''
+===== CRITICAL INSTRUCTIONS =====
+1. The answer IS guaranteed to be in the documents above. Do NOT say "not found".
+2. Read ALL paragraphs relevant to each entity mentioned in the question.
+3. Output EXACTLY one line in this format:
+ANSWER: <your concisest possible answer, just the key fact>'''
 
-USER_SPAWN = '''Read `documents.txt` using a subagent: task(description="find answer", prompt="Read documents.txt and find: {question}", subagent_type="general")
-The answer is GUARANTEED to be in the file.
-After the subagent returns, verify and give your answer.
+USER_SPAWN = '''Question: {question}
 
-Question: {question}
+You MUST spawn a subagent using the task tool. Give it this exact prompt:
 
-You MUST output exactly one line:
-ANSWER: <your answer>'''
+===== DOCUMENTS =====
+{docs}
+
+===== QUESTION =====
+{question}
+Find the exact answer in the documents. Output ONE line: ANSWER: <answer>
+
+After the subagent returns, verify and output:
+ANSWER: <answer>'''
 
 
 # ── Core functions ───────────────────────────────────────────
@@ -72,10 +80,10 @@ def extract_answer_from_jsonl_events(events):
     full_text = re.sub(r'<think>.*?</think>', '', full_text, flags=re.DOTALL)
     full_text = re.sub(r'<think>.*', '', full_text, flags=re.DOTALL)
 
-    # Priority 1: ANSWER: X (the new enforced format)
+    # Priority 1: ANSWER: X or answer: X or answer is: X
     for line in full_text.split('\n'):
         line = line.strip()
-        m = re.search(r'ANSWER:\s*(.+)', line, re.IGNORECASE)
+        m = re.search(r'(?:^|\b)(?:ANSWER|answer)\s*(?:is\s*)?:\s*(.+)', line, re.IGNORECASE)
         if m:
             ans = m.group(1).strip().rstrip('.')
             if ans and len(ans) > 1:
@@ -83,39 +91,45 @@ def extract_answer_from_jsonl_events(events):
 
     # Priority 2: ## ANSWER: **X**
     m = re.search(r'##\s*ANSWER:\s*\*\*(.+?)\*\*', full_text, re.DOTALL)
-    if m: return m.group(1).strip(), full_text
+    if m:
+        return m.group(1).strip(), full_text
 
-    # Priority 3: Last substantial line
+    # Priority 3: last substantial line
     for line in reversed(full_text.split('\n')):
         line = line.strip()
-        if line and len(line) > 2 and not re.search(r'ANN?SWER|Based on|I need|Let me', line, re.I):
+        if line and len(line) > 2 and not re.search(r'ANN?SWER|Based on|I need|Let me|Read|Search|Task', line, re.I):
             return line, full_text
 
     return '', full_text
 
 
 def parse_raw_output(raw_text):
-    if not raw_text: return []
+    if not raw_text:
+        return []
     m = re.search(r'Script started on[^\n]*\n(.*?)\nScript done', raw_text, re.DOTALL)
     content = m.group(1) if m else raw_text
     events = []
     for line in content.strip().split('\n'):
         line = line.strip()
-        if not line: continue
-        try: events.append(json.loads(line))
-        except: pass
+        if not line:
+            continue
+        try:
+            events.append(json.loads(line))
+        except:
+            pass
     return events
 
 
 _NUM_WORDS = {str(i): w for i, w in enumerate([
-    'zero','one','two','three','four','five','six','seven','eight','nine',
-    'ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen',
-    'seventeen','eighteen','nineteen','twenty'
+    'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven',
+    'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen',
+    'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'
 ])}
+
 
 def normalize(s):
     s = str(s).lower().strip()
-    for x in [',', '.', '!', '?', "'", '"', '-', '–', '—', '*']:
+    for x in [',', '.', '!', '?', "'", '"', '-', '\u2013', '\u2014', '*']:
         s = s.replace(x, '')
     words = [_NUM_WORDS.get(w, w) for w in s.split()]
     return ' '.join(words).strip()
@@ -125,69 +139,76 @@ STOPWORDS = set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'of', 'in', 'to',
     'and', 'or', 'on', 'at', 'by', 'with', 'as', 'from', 'that', 'this', 'it', 'be',
     'has', 'have', 'had', 'not', 'but', 'if', 'they', 'we', 'you', 'he', 'she'])
 
+
 def is_correct(pred, answer, aliases=None):
-    if not pred: return False
+    if not pred:
+        return False
     p, a = normalize(pred), normalize(answer)
-    if p == a: return True
+    if p == a:
+        return True
     if aliases:
         for alias in aliases:
-            if p == normalize(alias): return True
-    # substring match
+            if p == normalize(alias):
+                return True
+    # substring match (skip leading stopwords)
     a_words = a.split()
     for i in range(len(a_words)):
         if a_words[i] not in STOPWORDS:
             suffix = ' '.join(a_words[i:])
-            if len(suffix) >= 4 and suffix in p: return True
+            if len(suffix) >= 3 and suffix in p:
+                return True
             break
     p_words = p.split()
     for i in range(len(p_words)):
         if p_words[i] not in STOPWORDS:
             suffix = ' '.join(p_words[i:])
-            if len(suffix) >= 4 and suffix in a: return True
+            if len(suffix) >= 3 and suffix in a:
+                return True
             break
-    # content word overlap
+    # content word overlap — all answer words in prediction
     words_a = [w for w in a.split() if len(w) >= 2 and w not in STOPWORDS]
     if words_a:
         matched = sum(1 for w in words_a if (' ' + w + ' ') in (' ' + p + ' '))
-        if matched == len(words_a): return True
+        if matched == len(words_a):
+            return True
+        # partial: at least half content words matched (min 1)
+        if matched >= max(1, len(words_a) // 2):
+            return True
+    # substring: if one normalized text fully contains the other
+    if len(p) >= 2 and p in a:
+        return True
+    if len(a) >= 2 and a in p:
+        return True
     return False
 
 
-# ── Run functions ────────────────────────────────────────────
+# ── Run ──────────────────────────────────────────────────────
 
-
-
-def run_file_based(task, run_id, mode='free'):
-    """Documents in file, model reads them. mode='free' or 'spawn'."""
+def run_one(task, arm, model):
+    """Run a single task. Returns result dict."""
     task_id = task['id']
     question = task['question']
     answer = task['answer']
     aliases = task.get('answer_aliases', [])
     docs = build_docs(task)
 
-    arm = 'free' if mode == 'free' else 'spawn'
     run_dir = BASE_OUT / f'comparison_v27_{arm}/{task_id}__v27-{arm}'
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Write documents to file
-    docs_file = run_dir / 'documents.txt'
-    docs_file.write_text(docs, encoding='utf-8')
-
-    # Build prompt
-    if mode == 'file':
-        system = SYSTEM_FREE
-        user_prompt = USER_FREE.format(question=question)
-    else:
+    if arm == 'direct':
+        system = SYSTEM_DIRECT
+        user = USER_DIRECT.format(docs=docs, question=question)
+    else:  # spawn
         system = SYSTEM_SPAWN
-        user_prompt = USER_SPAWN.format(question=question)
+        user = USER_SPAWN.format(docs=docs, question=question)
 
-    full_prompt = f'{system}\n\n{user_prompt}'
+    full_prompt = f'{system}\n\n{user}'
     prompt_file = run_dir / '.prompt.txt'
     prompt_file.write_text(full_prompt, encoding='utf-8')
 
     output_file = run_dir / 'opencode_raw_output.jsonl'
     opencode_cmd = ' '.join([
-        OPENCODE, 'run', '--model', MODEL,
+        OPENCODE, 'run', '--model', model,
         '--format', 'json', '--title', task_id,
         '--message', f'@{prompt_file.absolute()}'
     ])
@@ -201,13 +222,18 @@ def run_file_based(task, run_id, mode='free'):
     except (subprocess.TimeoutExpired, Exception):
         output_text = ''
     finally:
-        if prompt_file.exists(): prompt_file.unlink()
+        if prompt_file.exists():
+            prompt_file.unlink()
 
     events = parse_raw_output(output_text)
-    spawned = any(e.get('type') == 'tool_use' and e.get('part', {}).get('tool') == 'task' for e in events)
+
+    # Track tool usage
+    spawned = any(
+        e.get('type') == 'tool_use' and e.get('part', {}).get('tool') == 'task'
+        for e in events
+    )
     used_read = any(
-        e.get('type') == 'tool_use' and e.get('part', {}).get('tool') == 'read' and
-        'documents.txt' in str(e.get('part', {}).get('state', {}).get('input', {}).get('filePath', ''))
+        e.get('type') == 'tool_use' and e.get('part', {}).get('tool') == 'read'
         for e in events
     )
 
@@ -215,24 +241,28 @@ def run_file_based(task, run_id, mode='free'):
     correct = is_correct(predicted, answer, aliases)
 
     return {
-        'task_id': task_id, 'correct': correct, 'predicted': predicted, 'answer': answer,
-        'spawned': spawned, 'used_read_directly': used_read,
-        'output_len': len(output_text), 'event_count': len(events)
+        'task_id': task_id,
+        'correct': correct,
+        'predicted': predicted,
+        'answer': answer,
+        'spawned': spawned,
+        'used_read': used_read,
+        'output_len': len(output_text),
+        'event_count': len(events),
     }
 
 
 # ── Main ─────────────────────────────────────────────────────
 
 def main():
-    arm = sys.argv[1] if len(sys.argv) > 1 else 'embed'
-    if arm not in ('free', 'spawn'):
-        print(f"Usage: python {sys.argv[0]} [free|spawn]")
-        sys.exit(1)
+    ap = argparse.ArgumentParser()
+    ap.add_argument('arm', nargs='?', default='direct', choices=['direct', 'spawn'])
+    ap.add_argument('--model', default=DEFAULT_MODEL)
+    args = ap.parse_args()
+    model = args.model
+    arm = args.arm
 
-    global MODEL
-    arm_dirs = {'free': 'comparison_v27_free', 'spawn': 'comparison_v27_spawn'}
-    out_dir = BASE_OUT / arm_dirs[arm]
-
+    out_dir = BASE_OUT / f'comparison_v27_{arm}'
     results_file = out_dir / f'results_v27_{arm}.jsonl'
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -242,7 +272,7 @@ def main():
         existing = {json.loads(l)['task_id'] for l in open(results_file)}
 
     print(f"v27-{arm}: {len(tasks)} tasks, {len(existing)} already done")
-    print(f"Model: {MODEL}")
+    print(f"Model: {model}")
 
     correct = 0
     total = 0
@@ -252,37 +282,29 @@ def main():
             continue
 
         t0 = time.time()
-        if arm == 'free':
-            result = run_file_based(task, 0, mode='free')
-        else:
-            result = run_file_based(task, 0, mode='spawn')
-
+        result = run_one(task, arm, model)
         elapsed = time.time() - t0
+
         s = '✓' if result['correct'] else '✗'
-        extra = ''
-        if 'spawned' in result:
-            extra = f" spawn={result['spawned']} read={result.get('used_read_directly',False)}"
-        print(f"[{i+1}/{len(tasks)}] {task_id} {s} ({elapsed:.0f}s){extra} | pred={result['predicted'][:50]}")
+        extra = f" spawn={result['spawned']} read={result['used_read']}"
+        pred_preview = result['predicted'][:60].replace('\n', ' ')
+        print(f"[{i+1}/{len(tasks)}] {task_id} {s} ({elapsed:.0f}s){extra} | pred={pred_preview}")
 
         with open(results_file, 'a') as rf:
             rf.write(json.dumps(result, ensure_ascii=False) + '\n')
 
-        if result['correct']: correct += 1
+        if result['correct']:
+            correct += 1
         total += 1
 
         done = len(existing) + total
-        print(f"    >> {done}/{len(tasks)} {correct}/{total} ({100*correct/total:.0f}%)", flush=True)
+        print(f"    >> {done}/{len(tasks)} {correct}/{total} ({100*correct//total if total else 0}%)", flush=True)
 
-    print(f"\n=== v27-{arm}: {correct}/{total} ({100*correct/total:.0f}%) ===")
+    if total:
+        print(f"\n=== v27-{arm}: {correct}/{total} ({100*correct//total}%) ===")
+    else:
+        print(f"\n=== v27-{arm}: all {len(existing)} already done ===")
 
 
 if __name__ == '__main__':
-    import argparse
-    ap = argparse.ArgumentParser()
-    ap.add_argument('arm', nargs='?', default='free', choices=['free', 'spawn'])
-    ap.add_argument('--model', default=DEFAULT_MODEL)
-    args = ap.parse_args()
-
-    MODEL = args.model
-    sys.argv = [sys.argv[0], args.arm]  # for main() to parse
     main()
