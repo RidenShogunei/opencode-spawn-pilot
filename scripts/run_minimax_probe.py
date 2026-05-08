@@ -284,20 +284,12 @@ def main():
     run_id = int(time.time())
 
     tasks = load_tasks()
-    # Probe: pick 2 × 2hop, 2 × 3hop, 1 × 4hop
-    probe_tasks = []
-    hop_counts = {'2hop': 0, '3hop': 0, '4hop': 0}
-    targets = {'2hop': 2, '3hop': 2, '4hop': 1}
+    # Probe: first 5 tasks (mixed HotpotQA)
+    probe_tasks = tasks[:5]
 
-    for task in tasks:
-        hop = task['id'].split('__')[0]
-        if hop in targets and hop_counts.get(hop, 0) < targets[hop]:
-            probe_tasks.append(task)
-            hop_counts[hop] = hop_counts.get(hop, 0) + 1
-        if all(hop_counts.get(h, 0) >= targets[h] for h in targets):
-            break
-
-    print(f"Probe: {len(probe_tasks)} tasks ({hop_counts})")
+    print(f"Probe: {len(probe_tasks)} tasks")
+    for t in probe_tasks:
+        print(f"  {t['id']}: {t['type']} | {t['level']} | {t['question'][:60]}...")
     print(f"Model: {MODEL}")
     print(f"Output: {OUTPUT_DIR}\n")
 
