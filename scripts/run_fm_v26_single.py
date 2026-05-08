@@ -337,8 +337,13 @@ ANSWER: """
 
 
 def main():
-    if len(sys.argv) > 1:
-        run_id = int(sys.argv[1])
+    # run_id: optional positional (resume from a specific run_id)
+    try:
+        run_id = int(sys.argv[1]) if len(sys.argv) > 1 else None
+    except (ValueError, IndexError):
+        run_id = None
+    
+    if run_id:
         print(f"Resuming run_id={run_id}")
     else:
         run_id = int(time.time())
