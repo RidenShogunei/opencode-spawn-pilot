@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """
 v27 — Clean comparison: prompt quality vs model strategy.
-Three arms, all with improved prompts:
-  v27-embed: documents embedded in prompt (baseline, no spawn mention)
-  v27-file:  documents in file, model reads freely (improved prompt)
-  v27-spawn: documents in file, MUST spawn subagents (improved prompt)
+  v27-free:  improved prompt, model reads freely (compare vs v26-free ~80%)
+  v27-spawn: improved prompt + MUST spawn (compare vs v26-FM ~45%)
 
 Key improvements vs v26:
   1. Explicit "answer IS in documents" assertion → prevents "not found"
@@ -21,26 +19,14 @@ BASE_OUT = Path('/home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot')
 
 # ── Prompts ──────────────────────────────────────────────────
 
-SYSTEM_EMBED = '''You are a precise research assistant. Answer multi-hop questions using the documents provided below.
-Read all paragraphs carefully. The answer is guaranteed to be in these documents.
-After analyzing, give your final answer.'''
-
-SYSTEM_FILE = '''You are a precise research assistant. You have access to tools: read, bash, grep, task.
+SYSTEM_FREE = '''You are a precise research assistant. You have access to tools: read, bash, grep, task.
 Answer multi-hop questions by reading the documents file.'''
 
 SYSTEM_SPAWN = '''You are a precise research agent. You have access to tools including: task (spawn subagents), read, grep.
 You MUST use the task tool to spawn subagents before answering.'''
 
 # User prompts
-USER_EMBED = '''Documents:
-{docs}
-
-Question: {question}
-
-You MUST output exactly one line:
-ANSWER: <your answer>'''
-
-USER_FILE = '''Read the file `documents.txt` COMPLETELY now.
+USER_FREE = '''Read the file `documents.txt` COMPLETELY now.
 The answer to the question below is GUARANTEED to be found in that file.
 After reading all paragraphs carefully, answer the question.
 
@@ -169,59 +155,17 @@ def is_correct(pred, answer, aliases=None):
 
 # ── Run functions ────────────────────────────────────────────
 
-def run_embed(task, run_id):
-    """Documents embedded in prompt — baseline."""
+
+
+def run_file_based(task, run_id, mode='free'):
+    """Documents in file, model reads them. mode='free' or 'spawn'."""
     task_id = task['id']
     question = task['question']
     answer = task['answer']
     aliases = task.get('answer_aliases', [])
     docs = build_docs(task)
 
-    run_dir = BASE_OUT / f'comparison_v27_embed/{task_id}__v27-embed'
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    user_prompt = USER_EMBED.format(docs=docs, question=question)
-    full_prompt = f'{SYSTEM_EMBED}\n\n{user_prompt}'
-    prompt_file = run_dir / '.prompt.txt'
-    prompt_file.write_text(full_prompt, encoding='utf-8')
-
-    output_file = run_dir / 'opencode_raw_output.jsonl'
-    opencode_cmd = ' '.join([
-        OPENCODE, 'run', '--model', MODEL,
-        '--format', 'json', '--title', task_id,
-        '--message', f'@{prompt_file.absolute()}'
-    ])
-    cmd = ['script', '-q', '-c', opencode_cmd, '/dev/null']
-
-    try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=str(run_dir))
-        output_bytes, _ = proc.communicate(timeout=600)
-        output_file.write_bytes(output_bytes)
-        output_text = output_bytes.decode('utf-8', errors='replace')
-    except (subprocess.TimeoutExpired, Exception):
-        output_text = ''
-    finally:
-        if prompt_file.exists(): prompt_file.unlink()
-
-    events = parse_raw_output(output_text)
-    predicted, _ = extract_answer_from_jsonl_events(events)
-    correct = is_correct(predicted, answer, aliases)
-
-    return {
-        'task_id': task_id, 'correct': correct, 'predicted': predicted, 'answer': answer,
-        'output_len': len(output_text), 'event_count': len(events)
-    }
-
-
-def run_file_based(task, run_id, mode='file'):
-    """Documents in file, model reads them. mode='file' or 'spawn'."""
-    task_id = task['id']
-    question = task['question']
-    answer = task['answer']
-    aliases = task.get('answer_aliases', [])
-    docs = build_docs(task)
-
-    arm = 'file' if mode == 'file' else 'spawn'
+    arm = 'free' if mode == 'free' else 'spawn'
     run_dir = BASE_OUT / f'comparison_v27_{arm}/{task_id}__v27-{arm}'
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -231,8 +175,8 @@ def run_file_based(task, run_id, mode='file'):
 
     # Build prompt
     if mode == 'file':
-        system = SYSTEM_FILE
-        user_prompt = USER_FILE.format(question=question)
+        system = SYSTEM_FREE
+        user_prompt = USER_FREE.format(question=question)
     else:
         system = SYSTEM_SPAWN
         user_prompt = USER_SPAWN.format(question=question)
@@ -281,12 +225,12 @@ def run_file_based(task, run_id, mode='file'):
 
 def main():
     arm = sys.argv[1] if len(sys.argv) > 1 else 'embed'
-    if arm not in ('embed', 'file', 'spawn'):
-        print(f"Usage: python {sys.argv[0]} [embed|file|spawn]")
+    if arm not in ('free', 'spawn'):
+        print(f"Usage: python {sys.argv[0]} [free|spawn]")
         sys.exit(1)
 
     global MODEL
-    arm_dirs = {'embed': 'comparison_v27_embed', 'file': 'comparison_v27_file', 'spawn': 'comparison_v27_spawn'}
+    arm_dirs = {'free': 'comparison_v27_free', 'spawn': 'comparison_v27_spawn'}
     out_dir = BASE_OUT / arm_dirs[arm]
 
     results_file = out_dir / f'results_v27_{arm}.jsonl'
@@ -308,10 +252,10 @@ def main():
             continue
 
         t0 = time.time()
-        if arm == 'embed':
-            result = run_embed(task, 0)
+        if arm == 'free':
+            result = run_file_based(task, 0, mode='free')
         else:
-            result = run_file_based(task, 0, mode=arm)
+            result = run_file_based(task, 0, mode='spawn')
 
         elapsed = time.time() - t0
         s = '✓' if result['correct'] else '✗'
@@ -335,7 +279,7 @@ def main():
 if __name__ == '__main__':
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument('arm', nargs='?', default='embed', choices=['embed', 'file', 'spawn'])
+    ap.add_argument('arm', nargs='?', default='free', choices=['free', 'spawn'])
     ap.add_argument('--model', default=DEFAULT_MODEL)
     args = ap.parse_args()
 
