@@ -94,10 +94,11 @@ def extract_answer_from_jsonl_events(events):
     if m:
         return m.group(1).strip(), full_text
 
-    # Priority 3: last substantial line
-    for line in reversed(full_text.split('\n')):
+    # Priority 3: last line that looks like an answer (not a meta/action line)
+    meta_pattern = re.compile(r"(?:^|\b)(?:I need|Let me|I will|I'll|Read the|Search|The documents|To answer|First|Task:)")
+    for line in reversed(full_text.split("\n")):
         line = line.strip()
-        if line and len(line) > 2 and not re.search(r'ANN?SWER|Based on|I need|Let me|Read|Search|Task', line, re.I):
+        if line and len(line) > 2 and not meta_pattern.search(line):
             return line, full_text
 
     return '', full_text
