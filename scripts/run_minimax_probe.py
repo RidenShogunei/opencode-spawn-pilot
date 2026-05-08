@@ -24,9 +24,9 @@ You may:
 CRITICAL: You MUST spawn at least one subagent before answering.
 For complex multi-hop questions, spawn subagents for each sub-question.
 
-After gathering information, give your verified answer.
-
-ANSWER:'''
+After gathering information, give your verified answer on a new line.
+You MUST output exactly:
+ANSWER: <your answer>'''
 
 
 def load_tasks():
@@ -91,12 +91,13 @@ def extract_answer_from_events(events):
     if m:
         return m.group(1).strip(), clean
 
-    # Priority 7: Last substantial line
+    # Priority 7: Last substantial line (not metadata/thinking)
     for line in reversed(clean.split('\n')):
         line = line.strip()
         if (line and len(line) > 2 and
             not re.search(r'ANNSWER|VERIFICATION|Based on|I need to|Let me', line, re.I) and
             not line.startswith('Does this information') and
+            not line.startswith('The documents show') and
             line != '<your answer>'):
             return line, clean
 
@@ -120,11 +121,25 @@ def parse_raw_output(raw_text):
     return events
 
 
+# Digit-to-word mapping for answer matching ("2" ↔ "two")
+_NUM_WORDS = {
+    '0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four',
+    '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine',
+    '10': 'ten', '11': 'eleven', '12': 'twelve', '13': 'thirteen',
+    '14': 'fourteen', '15': 'fifteen', '16': 'sixteen', '17': 'seventeen',
+    '18': 'eighteen', '19': 'nineteen', '20': 'twenty',
+}
+_WORD_NUMS = {v: k for k, v in _NUM_WORDS.items()}
+
 def normalize(s):
     s = str(s).lower().strip()
     for x in [',', '.', '!', '?', "'", '"', '-', '–', '—', '*']:
         s = s.replace(x, '')
-    return s.strip()
+    # Replace digit tokens with word equivalents for matching
+    words = []
+    for w in s.split():
+        words.append(_NUM_WORDS.get(w, w))
+    return ' '.join(words).strip()
 
 
 STOPWORDS = set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'of', 'in', 'to', 'for',
