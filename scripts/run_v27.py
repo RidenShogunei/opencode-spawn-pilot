@@ -50,7 +50,9 @@ You MUST spawn a subagent using the task tool. Give it this exact prompt:
 Find the exact answer in the documents. Output ONE line: ANSWER: <answer>
 
 After the subagent returns, verify and output:
-ANSWER: <answer>'''
+ANSWER: <answer>
+
+FALLBACK: If the task tool is unavailable, read the documents above directly and answer.'''
 
 
 # ── Core functions ───────────────────────────────────────────
@@ -220,11 +222,19 @@ def run_one(task, arm, model):
         output_bytes, _ = proc.communicate(timeout=600)
         output_file.write_bytes(output_bytes)
         output_text = output_bytes.decode('utf-8', errors='replace')
-    except (subprocess.TimeoutExpired, Exception):
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            leftover = proc.stdout.read() if proc.stdout else b''
+            output_file.write_bytes(leftover)
+            output_text = leftover.decode('utf-8', errors='replace')
+        except:
+            output_text = ''
+    except Exception:
         output_text = ''
     finally:
-        if prompt_file.exists():
-            prompt_file.unlink()
+        if prompt_file.exists() and output_text.strip():
+            prompt_file.unlink()  # keep prompt for debugging failures
 
     events = parse_raw_output(output_text)
 
