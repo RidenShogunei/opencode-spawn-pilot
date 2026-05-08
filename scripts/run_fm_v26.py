@@ -154,11 +154,24 @@ _NUM_WORDS = {
 }
 _WORD_NUMS = {v: k for k, v in _NUM_WORDS.items()}
 
+_NUM_WORDS = {
+    '0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four',
+    '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine',
+    '10': 'ten', '11': 'eleven', '12': 'twelve', '13': 'thirteen',
+    '14': 'fourteen', '15': 'fifteen', '16': 'sixteen', '17': 'seventeen',
+    '18': 'eighteen', '19': 'nineteen', '20': 'twenty',
+}
+_WORD_NUMS = {v: k for k, v in _NUM_WORDS.items()}
+
 def normalize(s):
     s = str(s).lower().strip()
     for x in [',', '.', '!', '?', "'", '"', '-', '–', '—']:
         s = s.replace(x, '')
     # Convert digit tokens to word equivalents
+    words = []
+    for w in s.split():
+        words.append(_NUM_WORDS.get(w, w))
+    return ' '.join(words).strip()
     words = []
     for w in s.split():
         words.append(_NUM_WORDS.get(w, w))
@@ -392,4 +405,16 @@ def main():
 
 
 if __name__ == '__main__':
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument('model', nargs='?', default='qwen', choices=['qwen', 'minimax'],
+                    help='Model: qwen (local vLLM) or minimax (API)')
+    args = ap.parse_args()
+
+    if args.model == 'minimax':
+        MODEL = 'minimax/MiniMax-M2.7-highspeed'
+        OUTPUT_DIR = Path(str(OUTPUT_DIR).replace('comparison_v26', 'comparison_v26_minimax_fm'))
+        RESULTS_FILE = OUTPUT_DIR / 'results_fm_v26_minimax.jsonl'
+        STDOUT_LOG = OUTPUT_DIR / 'v26_minimax_fm_stdout.log'
+        RUN_META = OUTPUT_DIR / 'run_meta_v26_minimax.json'
     main()
