@@ -219,7 +219,7 @@ def run_one(task, arm, model):
 
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=str(run_dir))
-        output_bytes, _ = proc.communicate(timeout=600)
+        output_bytes, _ = proc.communicate(timeout=180)
         output_file.write_bytes(output_bytes)
         output_text = output_bytes.decode('utf-8', errors='replace')
     except subprocess.TimeoutExpired:
