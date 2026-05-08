@@ -1,29 +1,32 @@
 #!/usr/bin/env python3
 """
-OpenCode Spawn Pilot v26-single — Single Agent baseline for v26.
-Documents in file (like v26), NO spawn instruction.
-Model reads documents.txt directly to answer.
+MiniMax API FM — Force-Multi (MUST spawn) spawn behavior with MiniMax M2.7-highspeed.
+Clone of v26-must: documents in file, MUST spawn trigger.
+Runs all 195 tasks (HotpotQA multi-hop) to compare vs Qwen3.5-9B.
 """
 import subprocess, json, time, sys, re, os
 from pathlib import Path
 
 OPENCODE = '/home/jinxu/.opencode/bin/opencode'
-MODEL = 'local/qwen35-9b'
+MODEL = 'minimax/MiniMax-M2.7-highspeed'
 DATA_DIR = Path('/home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot/task_data_v4')
-OUTPUT_DIR = Path('/home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot/comparison_v26_single_single')
-RESULTS_FILE = OUTPUT_DIR / 'results_single_v26.jsonl'
-STDOUT_LOG = OUTPUT_DIR / 'v26_single_stdout.log'
-RUN_META = OUTPUT_DIR / 'run_meta_v26_single_single.json'
+OUTPUT_DIR = Path('/home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot/minimax_fm_v1')
+RESULTS_FILE = OUTPUT_DIR / 'results_fm_v1.jsonl'
+STDOUT_LOG = OUTPUT_DIR / 'fm_stdout.log'
 
-# v26-single: Documents in file, no spawn — model reads directly to answer
-SYSTEM_FORCE_MULTI = '''You are a research agent. Answer multi-hop questions using the provided documents.
+SYSTEM_FORCE_MULTI = '''You are a research agent. You MUST use the 'task' tool to spawn subagents for document searches.
 
 The documents are in a file named `documents.txt` in your working directory.
-Read the file using the read tool to find the information you need.
+You may:
+  • Spawn a subagent: task(description="...", prompt="Read documents.txt and find <info>", subagent_type="general")
+  • Read `documents.txt` directly using the read tool
 
-After gathering information, give your verified answer.
+CRITICAL: You MUST spawn at least one subagent before answering.
+For complex multi-hop questions, spawn subagents for each sub-question.
 
-ANSWER:'''
+After gathering information, give your verified answer on a new line.
+You MUST output exactly:
+ANSWER: <your answer>'''
 
 
 def load_tasks():
@@ -42,43 +45,32 @@ def build_docs(task):
     return '\n'.join(lines)
 
 
-def extract_answer_from_jsonl_events(events):
-    """Extract answer from parsed JSONL events.
-    
-    v15 format: Agent writes "## ANSWER: **X**" or "## ANSWER: X" with verification steps.
-    We prioritize ## ANSWER patterns over bold-text fallbacks.
-    """
-    # Collect all text content
-    all_texts = []
-    for event in events:
-        if event.get('type') == 'text':
-            all_texts.append(event['part'].get('text', ''))
+def extract_answer_from_events(events):
+    """Extract answer from events, stripping think tags."""
+    full_text = '\n'.join(
+        e['part'].get('text', '') for e in events if e.get('type') == 'text'
+    )
+    # Strip  ️<｜end▁of▁thinking｜> tags
+    clean = re.sub(r'<think>.*?</think>', '', full_text, flags=re.DOTALL)
+    clean = re.sub(r'<think>.*', '', clean, flags=re.DOTALL)  # unclosed think
 
-    full_text = '\n'.join(all_texts)
+    # Priority 1: ## ANSWER: **X**
+    m = re.search(r'##\s*ANSWER:\s*\*\*(.+?)\*\*', clean, re.DOTALL)
+    if m and len(m.group(1).strip()) > 1:
+        return m.group(1).strip(), clean
 
-    # Priority 0: ## ANSWER: **X** (v15 bold, highest priority)
-    m = re.search(r'##\s*ANSWER:\s*\*\*(.+?)\*\*', full_text, re.DOTALL)
-    if m:
-        ans = m.group(1).strip()
-        if ans and len(ans) > 1:
-            return ans, full_text
+    # Priority 2: ## ANSWER: X
+    m = re.search(r'##\s*ANSWER:\s*(.+?)(?:\n|$)', clean, re.IGNORECASE)
+    if m and len(m.group(1).strip()) > 1:
+        return m.group(1).strip(), clean
 
-    # Priority 1: ## ANSWER: X (v15 plain)
-    m = re.search(r'##\s*ANSWER:\s*(.+?)(?:\n|$)', full_text, re.IGNORECASE)
-    if m:
-        ans = m.group(1).strip()
-        if ans and len(ans) > 1:
-            return ans, full_text
+    # Priority 3: ANSWER: **X**
+    m = re.search(r'ANSWER:\s*\*\*(.+?)\*\*', clean, re.DOTALL)
+    if m and len(m.group(1).strip()) > 1:
+        return m.group(1).strip(), clean
 
-    # Priority 2: ANSWER: **X** (old format bold)
-    m = re.search(r'ANSWER:\s*\*\*(.+?)\*\*', full_text, re.DOTALL)
-    if m:
-        ans = m.group(1).strip()
-        if ans and len(ans) > 1:
-            return ans, full_text
-
-    # Priority 3: ANSWER: X (simple, reversed scan for last occurrence)
-    for line in reversed(full_text.split('\n')):
+    # Priority 4: ANSWER: X (last occurrence)
+    for line in reversed(clean.split('\n')):
         line = line.strip()
         if not line:
             continue
@@ -87,45 +79,36 @@ def extract_answer_from_jsonl_events(events):
         if m:
             ans = m.group(1).strip()
             if ans and ans != '<your answer>' and len(ans) > 1:
-                return ans, full_text
+                return ans, clean
 
-    # Priority 4: **The answer is X.**
-    m = re.search(r'\*\*[Tt]he\s+[^\*]+is\s+([^.]+)\.', full_text)
+    # Priority 5: **The answer is X.**
+    m = re.search(r'\*\*[Tt]he\s+[^*]+is\s+([^.]+)\.', clean)
     if m:
-        return m.group(1).strip(), full_text
+        return m.group(1).strip(), clean
 
-    # Priority 5: **Answer: X.**
-    m = re.search(r'\*\*[Aa]nswer:\s*(.+?)\*\*', full_text)
+    # Priority 6: **Answer: X.**
+    m = re.search(r'\*\*[Aa]nswer:\s*(.+?)\*\*', clean)
     if m:
-        return m.group(1).strip(), full_text
+        return m.group(1).strip(), clean
 
-    # Priority 6: Last substantial line — avoid verification step text
-    for line in reversed(full_text.split('\n')):
+    # Priority 7: Last substantial line (not metadata/thinking)
+    for line in reversed(clean.split('\n')):
         line = line.strip()
         if (line and len(line) > 2 and
-            not re.search(r'ANN?SWER|VERIFICATION|Based on|I need to|Let me', line, re.I) and
+            not re.search(r'ANNSWER|VERIFICATION|Based on|I need to|Let me', line, re.I) and
             not line.startswith('Does this information') and
+            not line.startswith('The documents show') and
             line != '<your answer>'):
-            return line, full_text
+            return line, clean
 
-    return '', full_text
+    return '', clean
 
 
 def parse_raw_output(raw_text):
-    """Parse raw output file (may have Script started/Script done wrappers).
-    Returns list of JSONL lines (stripped of terminal markers)."""
     if not raw_text:
         return []
-
-    # Extract content between 'Script started' and 'Script done'
     m = re.search(r'Script started on[^\n]*\n(.*?)\nScript done', raw_text, re.DOTALL)
-    if m:
-        content = m.group(1)
-    else:
-        # No markers — assume raw JSONL
-        content = raw_text
-
-    # Parse into events
+    content = m.group(1) if m else raw_text
     events = []
     for line in content.strip().split('\n'):
         line = line.strip()
@@ -138,6 +121,7 @@ def parse_raw_output(raw_text):
     return events
 
 
+# Digit-to-word mapping for answer matching ("2" ↔ "two")
 _NUM_WORDS = {
     '0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four',
     '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine',
@@ -149,9 +133,9 @@ _WORD_NUMS = {v: k for k, v in _NUM_WORDS.items()}
 
 def normalize(s):
     s = str(s).lower().strip()
-    for x in [',', '.', '!', '?', "'", '"', '-', '–', '—']:
+    for x in [',', '.', '!', '?', "'", '"', '-', '–', '—', '*']:
         s = s.replace(x, '')
-    # Convert digit tokens to word equivalents
+    # Replace digit tokens with word equivalents for matching
     words = []
     for w in s.split():
         words.append(_NUM_WORDS.get(w, w))
@@ -204,22 +188,18 @@ def is_correct(pred, answer, aliases=None):
 
 
 def run_fm_task(task, run_id):
-    """Run a single force-multi task — v26: documents NOT in prompt."""
     task_id = task['id']
     question = task['question']
     answer = task['answer']
     aliases = task.get('answer_aliases', [])
     docs = build_docs(task)
 
-    run_dir = OUTPUT_DIR / f'{task_id}__single-v26-{run_id}'
+    run_dir = OUTPUT_DIR / f'{task_id}__mm-probe'
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Write documents to file — subagent will read this
     docs_file = run_dir / 'documents.txt'
     docs_file.write_text(docs, encoding='utf-8')
 
-    # v26-single: Documents NOT in prompt — model decides strategy.
-    # Give topic hints so model knows what to search for.
     topics = [p['title'] for p in task['paragraphs']]
     topic_hint = ', '.join(topics[:6])
     if len(topics) > 6:
@@ -234,15 +214,11 @@ Question: {question}
 ANSWER: """
 
     full_prompt = f'{SYSTEM_FORCE_MULTI}\n\n---\n\n{user_prompt}'
-
-    output_file = run_dir / 'opencode_raw_output.jsonl'
-    log_file = run_dir / 'opencode.log'
-    prompt_file = OUTPUT_DIR / f'.prompt_{task_id}_{run_id}.txt'
-
-    # Write prompt to file (model reads via @/path syntax)
+    prompt_file = OUTPUT_DIR / f'.prompt_{task_id}.txt'
     prompt_file.write_text(full_prompt, encoding='utf-8')
 
-    # Use 'script' for PTY (correct model behavior) + communicate() for complete capture
+    output_file = run_dir / 'opencode_raw_output.jsonl'
+
     opencode_cmd = ' '.join([
         OPENCODE, 'run',
         '--model', MODEL,
@@ -272,7 +248,6 @@ ANSWER: """
         if prompt_file.exists():
             prompt_file.unlink()
 
-    # Parse events
     events = parse_raw_output(output_text)
 
     spawned = False
@@ -291,7 +266,6 @@ ANSWER: """
                 spawned = True
                 task_event_index = i
             elif tool_name == 'read':
-                # Main agent read documents directly — track this
                 inp = part.get('state', {}).get('input', {})
                 fpath = inp.get('filePath', '')
                 if 'documents.txt' in fpath or 'documents' in fpath:
@@ -301,12 +275,10 @@ ANSWER: """
             content = part.get('text', '')
             all_text_parts.append(content)
 
-    # If a task tool was used and there are events after it, subagent returned
     if task_event_index is not None and task_event_index < len(events) - 1:
         subagent_returned = True
 
-    full_text = '\n'.join(all_text_parts)
-    predicted, _ = extract_answer_from_jsonl_events(events)
+    predicted, clean_text = extract_answer_from_events(events)
     correct = is_correct(predicted, answer, aliases)
 
     return {
@@ -319,54 +291,39 @@ ANSWER: """
         'used_read_directly': used_read_directly,
         'output_len': len(output_text),
         'event_count': len(events),
-        'text_parts': len(all_text_parts),
     }
 
 
 def main():
-    if len(sys.argv) > 1:
-        run_id = int(sys.argv[1])
-        print(f"Resuming run_id={run_id}")
-    else:
-        run_id = int(time.time())
-        print(f"Starting new run_id={run_id}")
-
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Save run metadata
-    with open(RUN_META, 'w') as f:
-        json.dump({'run_id': run_id, 'started': time.time()}, f)
-
-    # Check for existing results
-    existing = set()
-    if RESULTS_FILE.exists():
-        existing = {json.loads(l)['task_id'] for l in open(RESULTS_FILE)}
-        print(f"Found {len(existing)} existing results, will skip those tasks.")
+    run_id = int(time.time())
 
     tasks = load_tasks()
-    print(f"Loaded {len(tasks)} tasks, {len(existing)} already done.")
+    # Run all 195 tasks
+    probe_tasks = tasks
+
+    print(f"Probe: {len(probe_tasks)} tasks")
+    for t in probe_tasks:
+        print(f"  {t['id']}: {t['type']} | {t['level']} | {t['question'][:60]}...")
+    print(f"Model: {MODEL}")
+    print(f"Output: {OUTPUT_DIR}\n")
 
     log_file = open(STDOUT_LOG, 'w')
     correct = 0
     total = 0
+    spawned_count = 0
 
-    for i, task in enumerate(tasks):
+    for i, task in enumerate(probe_tasks):
         task_id = task['id']
-        if task_id in existing:
-            print(f"[{i+1}/{len(tasks)}] {task_id} ... SKIP")
-            continue
-
         t0 = time.time()
-        print(f"[{i+1}/{len(tasks)}] {task_id} ... ", end='', flush=True)
+        print(f"[{i+1}/{len(probe_tasks)}] {task_id} ... ", end='', flush=True)
         result = run_fm_task(task, run_id)
         elapsed = time.time() - t0
 
         status = '✓' if result['correct'] else '✗'
-        read_info = ', direct_read' if result['used_read_directly'] else ''
-        spawn_info = f"spawn={result['spawned']}, subagent={result['subagent_returned']}{read_info}"
-        print(f"{status} ({elapsed:.0f}s) {spawn_info}")
-        print(f"    Predicted: {result['predicted'][:80]}", file=log_file)
-        print(f"    Answer:    {result['answer']}", file=log_file)
+        strategy = 'spawn' if result['spawned'] else ('read' if result['used_read_directly'] else 'none')
+        print(f"{status} ({elapsed:.0f}s) strategy={strategy} | pred={result['predicted'][:60]}")
+        print(f"  Answer: {result['answer']}", file=log_file)
         log_file.flush()
 
         with open(RESULTS_FILE, 'a') as rf:
@@ -374,14 +331,18 @@ def main():
 
         if result['correct']:
             correct += 1
+        if result['spawned']:
+            spawned_count += 1
         total += 1
 
-        done = len(existing) + total
-        acc = 100 * correct / total if total > 0 else 0
-        print(f"    >> {done}/{len(tasks)} done, current acc: {correct}/{total} ({acc:.0f}%)", flush=True)
-
     log_file.close()
-    print(f"\n=== FM v26: {correct}/{total} ({100*correct/total:.0f}%) ===")
+
+    acc = 100 * correct / total if total > 0 else 0
+    spawn_rate = 100 * spawned_count / total if total > 0 else 0
+    print(f"\n=== Probe Results ===")
+    print(f"Accuracy: {correct}/{total} ({acc:.0f}%)")
+    print(f"Spawn rate: {spawned_count}/{total} ({spawn_rate:.0f}%)")
+    print(f"Results saved to: {RESULTS_FILE}")
 
 
 if __name__ == '__main__':

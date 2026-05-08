@@ -145,11 +145,24 @@ def parse_raw_output(raw_text):
     return events
 
 
+_NUM_WORDS = {
+    '0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four',
+    '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine',
+    '10': 'ten', '11': 'eleven', '12': 'twelve', '13': 'thirteen',
+    '14': 'fourteen', '15': 'fifteen', '16': 'sixteen', '17': 'seventeen',
+    '18': 'eighteen', '19': 'nineteen', '20': 'twenty',
+}
+_WORD_NUMS = {v: k for k, v in _NUM_WORDS.items()}
+
 def normalize(s):
     s = str(s).lower().strip()
     for x in [',', '.', '!', '?', "'", '"', '-', '–', '—']:
         s = s.replace(x, '')
-    return s.strip()
+    # Convert digit tokens to word equivalents
+    words = []
+    for w in s.split():
+        words.append(_NUM_WORDS.get(w, w))
+    return ' '.join(words).strip()
 
 
 STOPWORDS = set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'of', 'in', 'to', 'for',
