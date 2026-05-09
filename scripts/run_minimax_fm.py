@@ -83,10 +83,14 @@ def extract_answer_from_jsonl_events(events):
             return ans, full_text
 
     # Priority 2: **X** (bare bold, strip markers) — model outputs **Answer** without ## ANSWER:
-    m = re.search(r'\*\*([^*]+)\*\*', full_text, re.DOTALL)
-    if m:
+    # Skip headers/structural markers like **Answer:**, **Findings:**, **Synthesis:**
+    HEADER_PATTERNS = re.compile(
+        r'^\s*(Answer|Finding|Synthesis|Sub-question|Multi-hop|Breaking down|Step|Hop|Chain|Reasoning|Key|Analysis|Summary|Task|Decomposition)',
+        re.IGNORECASE
+    )
+    for m in re.finditer(r'\*\*([^*]+)\*\*', full_text, re.DOTALL):
         ans = m.group(1).strip()
-        if ans and len(ans) > 1:
+        if ans and len(ans) > 1 and not HEADER_PATTERNS.match(ans):
             return ans, full_text
 
     # Priority 3: ANSWER: **X** (old format bold)
