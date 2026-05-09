@@ -291,12 +291,15 @@ ANSWER: """
         output_bytes, _ = proc.communicate(timeout=600)
         output_file.write_bytes(output_bytes)
         output_text = output_bytes.decode('utf-8', errors='replace')
+        error = None
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.communicate()
         output_text = ''
+        error = 'timeout'
     except Exception as e:
         output_text = ''
+        error = str(e)
     finally:
         if prompt_file.exists():
             prompt_file.unlink()
@@ -349,6 +352,7 @@ ANSWER: """
         'output_len': len(output_text),
         'event_count': len(events),
         'text_parts': len(all_text_parts),
+        'error': error,
     }
 
 
@@ -367,26 +371,57 @@ def main():
     tasks = load_tasks()
     print(f"Loaded {len(tasks)} tasks.")
 
-    log_file = open(STDOUT_LOG, 'w')
+    # Structured per-task log — one JSON object per line
+    TASK_LOG = OUTPUT_DIR / 'tasks_v1_minimax.jsonl'
+
     correct = 0
     total = 0
 
     for i, task in enumerate(tasks):
         task_id = task['id']
-
         t0 = time.time()
-        print(f"[{i+1}/{len(tasks)}] {task_id} ... ", end='', flush=True)
+
+        stdout_msg = f"[{i+1}/{len(tasks)}] {task_id} ... "
+        print(stdout_msg, end='', flush=True)
+
         result = run_fm_task(task)
         elapsed = time.time() - t0
 
         status = '✓' if result['correct'] else '✗'
-        read_info = ', direct_read' if result['used_read_directly'] else ''
-        spawn_info = f"spawn={result['spawned']}, subagent={result['subagent_returned']}{read_info}"
-        print(f"{status} ({elapsed:.0f}s) {spawn_info}")
-        print(f"    Predicted: {result['predicted'][:80]}", file=log_file)
-        print(f"    Answer:    {result['answer']}", file=log_file)
-        log_file.flush()
+        read_info = ',direct_read' if result['used_read_directly'] else ''
+        spawn_info = f"spawn={result['spawned']},subagent={result['subagent_returned']}{read_info}"
+        raw_output_path = str(OUTPUT_DIR / f'{task_id}__fm-v1' / 'opencode_raw_output.jsonl')
 
+        task_record = {
+            'task_id': task_id,
+            'task_index': i + 1,
+            'total_tasks': len(tasks),
+            'elapsed_s': round(elapsed, 1),
+            'correct': result['correct'],
+            'status': status,
+            'spawned': result['spawned'],
+            'subagent_returned': result['subagent_returned'],
+            'used_read_directly': result['used_read_directly'],
+            'event_count': result['event_count'],
+            'text_parts': result['text_parts'],
+            'output_len': result['output_len'],
+            'predicted': result['predicted'],
+            'answer': result['answer'],
+            'spawn_info': spawn_info,
+            'raw_output': raw_output_path,
+            'error': result.get('error', None),
+        }
+
+        # Print human-readable summary line
+        print(f"{status} ({elapsed:.0f}s) {spawn_info}")
+        print(f"  pred={repr(result['predicted'][:60])}")
+        print(f"  ans ={repr(result['answer'][:60])}")
+
+        # Append structured record
+        with open(TASK_LOG, 'a') as lf:
+            lf.write(json.dumps(task_record, ensure_ascii=False) + '\n')
+
+        # Append results
         with open(RESULTS_FILE, 'a') as rf:
             rf.write(json.dumps(result, ensure_ascii=False) + '\n')
 
@@ -395,9 +430,8 @@ def main():
         total += 1
 
         acc = 100 * correct / total if total > 0 else 0
-        print(f"    >> {total}/{len(tasks)} done, current acc: {correct}/{total} ({acc:.0f}%)", flush=True)
+        print(f"  >> {total}/{len(tasks)} done, acc: {correct}/{total} ({acc:.0f}%)\n", flush=True)
 
-    log_file.close()
     print(f"\n=== FM v1 MiniMax: {correct}/{total} ({100*correct/total:.0f}%) ===")
 
 
