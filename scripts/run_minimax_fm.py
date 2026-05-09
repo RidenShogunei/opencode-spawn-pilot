@@ -82,25 +82,38 @@ def extract_answer_from_jsonl_events(events):
         if ans and len(ans) > 1:
             return ans, full_text
 
-    # Priority 2: **X** (bare bold, strip markers) — model outputs **Answer** without ## ANSWER:
+    # Priority 2: **Answer: X** (explicit answer format) — before bare bold
+    # e.g. **Answer: 2** or **Answer: some phrase**
+    m = re.search(r'\*\*[Aa]nswer:\s*(.+?)\*\*', full_text)
+    if m:
+        ans = m.group(1).strip()
+        # Allow single-char answers like "2" or "X"
+        if ans and len(ans) >= 1:
+            return ans, full_text
+
+    # Priority 3: **X** (bare bold, strip markers) — model outputs **Answer** without ## ANSWER:
     # Skip headers/structural markers like **Answer:**, **Findings:**, **Synthesis:**
     HEADER_PATTERNS = re.compile(
-        r'^\s*(Answer|Finding|Synthesis|Sub-question|Multi-hop|Breaking down|Step|Hop|Chain|Reasoning|Key|Analysis|Summary|Task|Decomposition)',
+        r'^\s*(Answer|Finding|Synthesis|Sub-question|Multi-hop|Breaking down|Step|Hop|Chain|Reasoning|Key|Analysis|Summary|Task|Decomposition)\s*[:\d]*\s*$',
         re.IGNORECASE
     )
-    for m in re.finditer(r'\*\*([^*]+)\*\*', full_text, re.DOTALL):
+    BARE_ANSWER_HEADER = re.compile(r'^\s*[Aa]nswer\s*:\s*$')
+    for m in re.finditer(r'\*\*([^\*]+)\*\*', full_text, re.DOTALL):
         ans = m.group(1).strip()
+        # Skip if it's just a header label like "Answer:" or "Answer: "
+        if BARE_ANSWER_HEADER.match(ans):
+            continue
         if ans and len(ans) > 1 and not HEADER_PATTERNS.match(ans):
             return ans, full_text
 
-    # Priority 3: ANSWER: **X** (old format bold)
+    # Priority 4: ANSWER: **X** (old format bold)
     m = re.search(r'ANSWER:\s*\*\*(.+?)\*\*', full_text, re.DOTALL)
     if m:
         ans = m.group(1).strip()
         if ans and len(ans) > 1:
             return ans, full_text
 
-    # Priority 3: ANSWER: X (simple, reversed scan for last occurrence)
+    # Priority 4: ANSWER: X (simple, reversed scan for last occurrence)
     for line in reversed(full_text.split('\n')):
         line = line.strip()
         if not line:
@@ -112,13 +125,8 @@ def extract_answer_from_jsonl_events(events):
             if ans and ans != '<your answer>' and len(ans) > 1:
                 return ans, full_text
 
-    # Priority 4: **The answer is X.**
+    # Priority 5: **The answer is X.**
     m = re.search(r'\*\*[Tt]he\s+[^\*]+is\s+([^.]+)\.', full_text)
-    if m:
-        return m.group(1).strip(), full_text
-
-    # Priority 5: **Answer: X.**
-    m = re.search(r'\*\*[Aa]nswer:\s*(.+?)\*\*', full_text)
     if m:
         return m.group(1).strip(), full_text
 
