@@ -244,7 +244,10 @@ def run_fm_task(task):
     if len(topics) > 6:
         topic_hint += f' ... ({len(topics)} total)'
 
-    user_prompt = f"""Answer this multi-hop question. Documents are in `documents.txt`.
+    user_prompt = f"""Execute this task now. Do NOT wait for further user input.
+
+Read `documents.txt` (in your working directory) and answer the question below.
+Do NOT ask for clarification — begin immediately.
 
 Document topics include: {topic_hint}
 
