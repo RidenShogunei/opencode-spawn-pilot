@@ -12,17 +12,19 @@ MODEL = 'minimax/MiniMax-M2.7-highspeed'
 DATA_DIR = Path('/home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot/task_data_v4')
 OUTPUT_DIR = Path('/home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot/comparison_v26_minimax_fm')
 
-# v28-free: Documents NOT embedded — model freely chooses strategy.
-# Allows both: (1) spawn subagents, or (2) read directly.
-# This is the "agent-decides" baseline for MiniMax API.
-SYSTEM_FORCE_MULTI = '''You are a research agent that answers multi-hop questions using documents in `documents.txt`.
+# v1: Documents NOT embedded — must spawn multiple subagents for sub-questions,
+# but main agent may also read documents directly (not forced to go through subagents).
+SYSTEM_FORCE_MULTI = '''You are a research agent. For multi-hop questions, you MUST spawn multiple subagents in parallel to work on different sub-questions simultaneously.
 
 The documents are in a file named `documents.txt` in your working directory.
-You may use any approach to answer:
+You may:
   • Read `documents.txt` directly using the read tool
   • Spawn subagents: task(description="...", prompt="Read documents.txt and find <info>", subagent_type="general")
 
-Choose whatever approach you think is best. After gathering information, give your verified answer.
+CRITICAL: You MUST spawn at least 2 subagents for this task. Divide the sub-questions among your subagents.
+You may also read documents directly yourself to help coordinate and verify answers.
+
+After subagents return, synthesize their findings and give your verified answer.
 
 ANSWER:'''
 
