@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OpenCode Spawn Pilot v28 — MiniMax API Version (agent-decides baseline)
+OpenCode Spawn Pilot — MiniMax API Harness v1
 Documents NOT embedded in prompt. Model freely chooses: read directly or spawn.
 Uses MiniMax-M2.7-highspeed via OpenCode CLI.
 """
@@ -221,7 +221,7 @@ def is_correct(pred, answer, aliases=None):
     return False
 
 
-def run_fm_task(task, run_id):
+def run_fm_task(task):
     """Run a single force-multi task — v26: documents NOT in prompt."""
     task_id = task['id']
     question = task['question']
@@ -229,7 +229,7 @@ def run_fm_task(task, run_id):
     aliases = task.get('answer_aliases', [])
     docs = build_docs(task)
 
-    run_dir = OUTPUT_DIR / f'{task_id}__fm-v28-{run_id}'
+    run_dir = OUTPUT_DIR / f'{task_id}__fm-v1'
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # Write documents to file — subagent will read this
@@ -255,7 +255,7 @@ ANSWER: """
 
     output_file = run_dir / 'opencode_raw_output.jsonl'
     log_file = run_dir / 'opencode.log'
-    prompt_file = OUTPUT_DIR / f'.prompt_{task_id}_{run_id}.txt'
+    prompt_file = OUTPUT_DIR / f'.prompt_{task_id}.txt'
 
     # Write prompt to file (model reads via @/path syntax)
     prompt_file.write_text(full_prompt, encoding='utf-8')
@@ -342,31 +342,19 @@ ANSWER: """
 
 
 def main():
-    # run_id: required positional — each run_id gets its own result file
-    if len(sys.argv) < 2:
-        print("Usage: python run_minimax_fm.py <run_id>")
-        sys.exit(1)
-    try:
-        run_id = int(sys.argv[1])
-    except ValueError:
-        print(f"run_id must be integer, got: {sys.argv[1]}")
-        sys.exit(1)
-
-    print(f"Starting run_id={run_id}")
-
-    # Per-run result file — no appending, no resume
-    RESULTS_FILE = OUTPUT_DIR / f'results_fm_v28_minimax_run{run_id}.jsonl'
-    STDOUT_LOG = OUTPUT_DIR / f'v28_minimax_run{run_id}_stdout.log'
-    RUN_META = OUTPUT_DIR / f'run_meta_v28_minimax_run{run_id}.json'
-
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Fixed result file for this harness version
+    RESULTS_FILE = OUTPUT_DIR / 'results_fm_v1_minimax.jsonl'
+    STDOUT_LOG = OUTPUT_DIR / 'v1_minimax_stdout.log'
+    RUN_META = OUTPUT_DIR / 'run_meta_v1_minimax.json'
 
     # Save run metadata
     with open(RUN_META, 'w') as f:
-        json.dump({'run_id': run_id, 'started': time.time()}, f)
+        json.dump({'started': time.time()}, f)
 
     tasks = load_tasks()
-    print(f"Loaded {len(tasks)} tasks for run_id={run_id}.")
+    print(f"Loaded {len(tasks)} tasks.")
 
     log_file = open(STDOUT_LOG, 'w')
     correct = 0
@@ -377,7 +365,7 @@ def main():
 
         t0 = time.time()
         print(f"[{i+1}/{len(tasks)}] {task_id} ... ", end='', flush=True)
-        result = run_fm_task(task, run_id)
+        result = run_fm_task(task)
         elapsed = time.time() - t0
 
         status = '✓' if result['correct'] else '✗'
@@ -399,7 +387,7 @@ def main():
         print(f"    >> {total}/{len(tasks)} done, current acc: {correct}/{total} ({acc:.0f}%)", flush=True)
 
     log_file.close()
-    print(f"\n=== FM v28 MiniMax API run_id={run_id}: {correct}/{total} ({100*correct/total:.0f}%) ===")
+    print(f"\n=== FM v1 MiniMax: {correct}/{total} ({100*correct/total:.0f}%) ===")
 
 
 if __name__ == '__main__':
