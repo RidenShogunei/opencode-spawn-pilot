@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-OpenCode Spawn Pilot v26 — MiniMax API Version
-Documents NOT embedded in prompt. Model MUST spawn subagents to read documents.txt.
-Uses MiniMax-M2.7-highspeed via OpenCode API.
+OpenCode Spawn Pilot v28 — MiniMax API Version (agent-decides baseline)
+Documents NOT embedded in prompt. Model freely chooses: read directly or spawn.
+Uses MiniMax-M2.7-highspeed via OpenCode CLI.
 """
 import subprocess, json, time, sys, re, os
 from pathlib import Path
@@ -11,23 +11,18 @@ OPENCODE = '/home/jinxu/.opencode/bin/opencode'
 MODEL = 'minimax/MiniMax-M2.7-highspeed'
 DATA_DIR = Path('/home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot/task_data_v4')
 OUTPUT_DIR = Path('/home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot/comparison_v26_minimax_fm')
-RESULTS_FILE = OUTPUT_DIR / 'results_fm_v26_minimax.jsonl'
-STDOUT_LOG = OUTPUT_DIR / 'v26_minimax_fm_stdout.log'
-RUN_META = OUTPUT_DIR / 'run_meta_v26_minimax.json'
 
-# v26-must: Documents NOT embedded — "MUST spawn" trigger + free choice.
-# Tests whether the MUST keyword overrides model's default "read directly" preference.
-SYSTEM_FORCE_MULTI = '''You are a research agent. You MUST use the 'task' tool to spawn subagents for document searches.
+# v28-free: Documents NOT embedded — model freely chooses strategy.
+# Allows both: (1) spawn subagents, or (2) read directly.
+# This is the "agent-decides" baseline for MiniMax API.
+SYSTEM_FORCE_MULTI = '''You are a research agent that answers multi-hop questions using documents in `documents.txt`.
 
 The documents are in a file named `documents.txt` in your working directory.
-You may:
-  • Spawn a subagent: task(description="...", prompt="Read documents.txt and find <info>", subagent_type="general")
+You may use any approach to answer:
   • Read `documents.txt` directly using the read tool
+  • Spawn subagents: task(description="...", prompt="Read documents.txt and find <info>", subagent_type="general")
 
-CRITICAL: You MUST spawn at least one subagent before answering.
-For complex multi-hop questions, spawn subagents for each sub-question.
-
-After gathering information, give your verified answer.
+Choose whatever approach you think is best. After gathering information, give your verified answer.
 
 ANSWER:'''
 
@@ -234,7 +229,7 @@ def run_fm_task(task, run_id):
     aliases = task.get('answer_aliases', [])
     docs = build_docs(task)
 
-    run_dir = OUTPUT_DIR / f'{task_id}__fm-v26-{run_id}'
+    run_dir = OUTPUT_DIR / f'{task_id}__fm-v28-{run_id}'
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # Write documents to file — subagent will read this
@@ -347,17 +342,22 @@ ANSWER: """
 
 
 def main():
-    # run_id: optional positional (resume from a specific run_id)
+    # run_id: required positional — each run_id gets its own result file
+    if len(sys.argv) < 2:
+        print("Usage: python run_minimax_fm.py <run_id>")
+        sys.exit(1)
     try:
-        run_id = int(sys.argv[1]) if len(sys.argv) > 1 else None
-    except (ValueError, IndexError):
-        run_id = None
+        run_id = int(sys.argv[1])
+    except ValueError:
+        print(f"run_id must be integer, got: {sys.argv[1]}")
+        sys.exit(1)
 
-    if run_id:
-        print(f"Resuming run_id={run_id}")
-    else:
-        run_id = int(time.time())
-        print(f"Starting new run_id={run_id}")
+    print(f"Starting run_id={run_id}")
+
+    # Per-run result file — no appending, no resume
+    RESULTS_FILE = OUTPUT_DIR / f'results_fm_v28_minimax_run{run_id}.jsonl'
+    STDOUT_LOG = OUTPUT_DIR / f'v28_minimax_run{run_id}_stdout.log'
+    RUN_META = OUTPUT_DIR / f'run_meta_v28_minimax_run{run_id}.json'
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -365,14 +365,8 @@ def main():
     with open(RUN_META, 'w') as f:
         json.dump({'run_id': run_id, 'started': time.time()}, f)
 
-    # Check for existing results
-    existing = set()
-    if RESULTS_FILE.exists():
-        existing = {json.loads(l)['task_id'] for l in open(RESULTS_FILE)}
-        print(f"Found {len(existing)} existing results, will skip those tasks.")
-
     tasks = load_tasks()
-    print(f"Loaded {len(tasks)} tasks, {len(existing)} already done.")
+    print(f"Loaded {len(tasks)} tasks for run_id={run_id}.")
 
     log_file = open(STDOUT_LOG, 'w')
     correct = 0
@@ -380,9 +374,6 @@ def main():
 
     for i, task in enumerate(tasks):
         task_id = task['id']
-        if task_id in existing:
-            print(f"[{i+1}/{len(tasks)}] {task_id} ... SKIP")
-            continue
 
         t0 = time.time()
         print(f"[{i+1}/{len(tasks)}] {task_id} ... ", end='', flush=True)
@@ -404,12 +395,11 @@ def main():
             correct += 1
         total += 1
 
-        done = len(existing) + total
         acc = 100 * correct / total if total > 0 else 0
-        print(f"    >> {done}/{len(tasks)} done, current acc: {correct}/{total} ({acc:.0f}%)", flush=True)
+        print(f"    >> {total}/{len(tasks)} done, current acc: {correct}/{total} ({acc:.0f}%)", flush=True)
 
     log_file.close()
-    print(f"\n=== FM v26 MiniMax API: {correct}/{total} ({100*correct/total:.0f}%) ===")
+    print(f"\n=== FM v28 MiniMax API run_id={run_id}: {correct}/{total} ({100*correct/total:.0f}%) ===")
 
 
 if __name__ == '__main__':
