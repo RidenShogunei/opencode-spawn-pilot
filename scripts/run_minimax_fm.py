@@ -82,7 +82,14 @@ def extract_answer_from_jsonl_events(events):
         if ans and len(ans) > 1:
             return ans, full_text
 
-    # Priority 2: ANSWER: **X** (old format bold)
+    # Priority 2: **X** (bare bold, strip markers) — model outputs **Answer** without ## ANSWER:
+    m = re.search(r'\*\*([^*]+)\*\*', full_text, re.DOTALL)
+    if m:
+        ans = m.group(1).strip()
+        if ans and len(ans) > 1:
+            return ans, full_text
+
+    # Priority 3: ANSWER: **X** (old format bold)
     m = re.search(r'ANSWER:\s*\*\*(.+?)\*\*', full_text, re.DOTALL)
     if m:
         ans = m.group(1).strip()
@@ -201,7 +208,7 @@ def is_correct(pred, answer, aliases=None):
             suffix = ' '.join(a_words[i:])
             if len(suffix) >= 4 and suffix in p:
                 return True
-            break
+            break  # only check first non-stopword anchor point
     # Prediction as substring of answer
     p_words = p.split()
     for i in range(len(p_words)):
@@ -209,7 +216,7 @@ def is_correct(pred, answer, aliases=None):
             suffix = ' '.join(p_words[i:])
             if len(suffix) >= 4 and suffix in a:
                 return True
-            break
+            break  # only check first non-stopword anchor point
     # All non-stopword content words from answer appear in prediction
     words_a = [w for w in a.split() if len(w) >= 2 and w.lower() not in STOPWORDS]
     if words_a:
