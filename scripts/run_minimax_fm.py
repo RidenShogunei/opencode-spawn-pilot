@@ -65,9 +65,8 @@ def extract_answer_from_jsonl_events(events):
 
     full_text = '\n'.join(all_text_parts)
 
-    # Strip think tags (MiniMax may output these)
-    full_text = re.sub(r'<think>.*', '', full_text, flags=re.DOTALL)
-    full_text = re.sub(r'<think>.*', '', full_text, flags=re.DOTALL)
+    # Strip think tags (MiniMax may output these) — non-greedy to avoid consuming entire text
+    full_text = re.sub(r'<think>.*?</think>', '', full_text, flags=re.DOTALL)
 
     # Priority 0: ## ANSWER: **X** (v15 bold, highest priority)
     m = re.search(r'##\s*ANSWER:\s*\*\*(.+?)\*\*', full_text, re.DOTALL)
