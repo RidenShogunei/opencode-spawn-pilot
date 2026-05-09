@@ -119,6 +119,12 @@ def extract_answer_from_jsonl_events(events):
             line != '<your answer>'):
             return line, full_text
 
+    # Priority 7: Last isolated number or short answer (thinking=false edge case
+    # where model outputs bare thinking tags with answer at end, e.g. "...assistant5")
+    m = re.search(r'\d+(?:\.\d+)?$', full_text.strip())
+    if m:
+        return m.group(0), full_text
+
     return '', full_text
 
 
