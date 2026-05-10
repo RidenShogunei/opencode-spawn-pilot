@@ -6,11 +6,10 @@ Fullwiki distractor setting: 10 Wikipedia articles per question.
 """
 import subprocess, json, time, re, os
 from pathlib import Path
-import pandas as pd
 
 OPENCODE = '/home/jinxu/.opencode/bin/opencode'
 MODEL = 'minimax/MiniMax-M2.7-highspeed'
-PARQUET_FILE = Path('/home/jinxu/opencode-spawn-pilot/hotpot_fullwiki_val.parquet')
+ARROW_FILE = '/home/jinxu/.cache/huggingface/datasets/distractor/default/0.0.0/9caa7cb3112ee384/distractor-validation.arrow'
 OUTPUT_DIR = Path('/home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot/hotpotqa_minimax_fm')
 LIMIT = int(os.environ.get('HOTPOT_LIMIT', '0'))  # 0 = all
 
@@ -69,7 +68,10 @@ def extract_answer_from_text(full_text):
         m = re.search(r'ANSWER:\s*(.+)', line, re.IGNORECASE)
         if m:
             ans = m.group(1).strip()
-            if ans and ans != '<your answer>' and len(ans) >= 1:
+            # Skip prompt placeholders
+            if ans in ('<your brief answer>', '<your answer>', 'your brief answer', 'your answer'):
+                continue
+            if ans and len(ans) >= 1:
                 return ans
 
     # Priority 3: Last substantial line (avoid headers)
@@ -144,17 +146,21 @@ def hotpot_f1(pred, gold):
 
 
 def load_hotpot():
-    """Load HotpotQA fullwiki validation set."""
-    df = pd.read_parquet(PARQUET_FILE)
+    """Load HotpotQA distractor validation set from Arrow file."""
+    import pyarrow as pa
+    with pa.memory_map(ARROW_FILE, 'r') as source:
+        reader = pa.ipc.open_stream(source)
+        table = reader.read_all()
+    rows = table.to_pydict()
     tasks = []
-    for _, row in df.iterrows():
+    for i in range(len(rows['id'])):
         tasks.append({
-            'id': str(row['id']),
-            'question': row['question'],
-            'answer': row['answer'],
-            'type': row['type'],
-            'level': row['level'],
-            'context': row['context'],
+            'id': str(rows['id'][i]),
+            'question': rows['question'][i],
+            'answer': rows['answer'][i],
+            'type': rows['type'][i],
+            'level': rows['level'][i],
+            'context': rows['context'][i],
         })
     if LIMIT > 0:
         tasks = tasks[:LIMIT]
