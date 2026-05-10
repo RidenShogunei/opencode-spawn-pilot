@@ -9,8 +9,8 @@ from pathlib import Path
 
 OPENCODE = '/home/jinxu/.opencode/bin/opencode'
 MODEL = 'minimax/MiniMax-M2.7-highspeed'
-DATA_DIR = Path('/home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot/task_data_v4')
-OUTPUT_DIR = Path('/home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot/comparison_v26_minimax_fm')
+DATA_DIR = Path('/home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot/task_data_v5')
+OUTPUT_DIR = Path('/home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot/comparison_v27_minimax_fm')
 
 # v1: Documents NOT embedded — must spawn multiple subagents for sub-questions,
 # but main agent may also read documents directly (not forced to go through subagents).
