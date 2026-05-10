@@ -84,11 +84,13 @@ def extract_answer_from_jsonl_events(events):
 
     # Priority 2: **Answer: X** (explicit answer format) — before bare bold
     # e.g. **Answer: 2** or **Answer: some phrase**
-    m = re.search(r'\*\*[Aa]nswer:\s*(.+?)\*\*', full_text)
+    # Use re.IGNORECASE because [Aa]nswer alone doesn't match ANSWER:
+    m = re.search(r'\*\*[Aa]nswer:\s*(.+?)\*\*', full_text, re.IGNORECASE)
     if m:
         ans = m.group(1).strip()
         # Allow single-char answers like "2" or "X"
-        if ans and len(ans) >= 1:
+        # Skip if answer still contains ** (malformed output like **Answer:** X **)
+        if ans and len(ans) >= 1 and '**' not in ans:
             return ans, full_text
 
     # Priority 3: **X** (bare bold, strip markers) — model outputs **Answer** without ## ANSWER:
