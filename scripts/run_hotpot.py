@@ -87,6 +87,7 @@ def extract_answer_from_text(full_text):
 
 def parse_raw_output(raw_text):
     """Parse JSONL events from raw output."""
+    # Strip script wrapper if present (for TTY mode)
     m = re.search(r'Script started on[^\n]*\n(.*?)\nScript done', raw_text, re.DOTALL)
     content = m.group(1) if m else raw_text
     events = []
@@ -196,21 +197,21 @@ ANSWER: """
 
     prompt_file.write_text(full_prompt, encoding='utf-8')
 
-    opencode_cmd = ' '.join([
+    cmd = [
         OPENCODE, 'run',
         '--model', MODEL,
         '--format', 'json',
         '--title', task_id,
         '--message', f'@{prompt_file.absolute()}'
-    ])
-    cmd = ['script', '-q', '-c', opencode_cmd, '/dev/null']
+    ]
 
     try:
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            cwd=str(run_dir)
+            cwd=str(run_dir),
+            env={**os.environ, 'TERM': 'dumb'}
         )
         output_bytes, _ = proc.communicate(timeout=600)
         output_file.write_bytes(output_bytes)
