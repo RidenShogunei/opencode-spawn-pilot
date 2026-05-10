@@ -24,9 +24,10 @@ You may:
 CRITICAL: You MUST spawn at least 2 subagents for this task. Divide the sub-questions among your subagents.
 You may also read documents directly yourself to help coordinate and verify answers.
 
-After subagents return, synthesize their findings and give your verified answer.
+After subagents return, synthesize their findings.
 
-ANSWER:'''
+**Answer format: Put your final answer on a single line: ANSWER: <your brief answer>**
+Do NOT include explanations, reasoning, or any other text after the answer line.'''
 
 
 def load_tasks():
