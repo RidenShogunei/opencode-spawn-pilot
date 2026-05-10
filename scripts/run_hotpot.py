@@ -12,7 +12,7 @@ OPENCODE = '/home/jinxu/.opencode/bin/opencode'
 MODEL = 'minimax/MiniMax-M2.7-highspeed'
 PARQUET_FILE = Path('/home/jinxu/opencode-spawn-pilot/hotpot_fullwiki_val.parquet')
 OUTPUT_DIR = Path('/home/jinxu/opencode-spawn-pilot/outputs/opencode_spawn_pilot/hotpotqa_minimax_fm')
-N_SAMPLES = None  # None = all, or set to e.g. 50 for quick test
+LIMIT = int(os.environ.get('HOTPOT_LIMIT', '0'))  # 0 = all
 
 SYSTEM_FORCE_MULTI = '''You are a research agent. For multi-hop questions, you MUST spawn multiple subagents in parallel to work on different sub-questions simultaneously.
 
@@ -155,8 +155,8 @@ def load_hotpot():
             'level': row['level'],
             'context': row['context'],
         })
-    if N_SAMPLES:
-        tasks = tasks[:N_SAMPLES]
+    if LIMIT > 0:
+        tasks = tasks[:LIMIT]
     return tasks
 
 
