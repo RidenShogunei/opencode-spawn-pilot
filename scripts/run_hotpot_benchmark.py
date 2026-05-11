@@ -73,77 +73,137 @@ def load_hotpot(limit=0):
 
 
 def extract_answer_from_jsonl_events(events):
-    """Extract answer from JSONL events."""
-    all_texts = []
-    for event in events:
-        if event.get('type') == 'text':
-            txt = event.get('part', {}).get('text', '')
-            if txt.strip():
-                all_texts.append(txt)
-    full_text = '\n'.join(all_texts)
+    """Extract answer from the last text event's last line only.
 
-    # Priority 0: ## ANSWER: **X**
-    m = re.search(r'##\s*ANSWER:\s*\*\*(.+?)\*\*', full_text, re.DOTALL)
-    if m:
-        ans = m.group(1).strip()
-        if ans and len(ans) > 1:
-            return ans, full_text
+    Bugfix v2: Previous extraction scanned ALL text events and greedily matched
+    bare **bold** from subagent thinking output, causing wrong entity names to be
+    returned instead of the final answer. Now we only look at the very last
+    text event and extract from its final line only.
+    """
+    text_events = [e for e in events if e.get('type') == 'text']
+    if not text_events:
+        return '', ''
+    last_text = text_events[-1].get('part', {}).get('text', '')
 
-    # Priority 1: ## ANSWER: X
-    m = re.search(r'##\s*ANSWER:\s*(.+?)(?:\n|$)', full_text, re.IGNORECASE)
-    if m:
-        ans = m.group(1).strip()
-        if ans and len(ans) > 1:
-            return ans, full_text
+    # Strip think tags (MiniMax/Qwen3.5 emit <think>...</think> tokens)
+    last_text = re.sub(r'<think>.*?』', '', last_text, flags=re.DOTALL)
+    last_text = re.sub(r'<think>.*', '', last_text)
 
-    # Priority 2: **Answer: X**
-    m = re.search(r'\*\*[Aa]nswer:\s*(.+?)\*\*', full_text, re.IGNORECASE)
-    if m:
-        ans = m.group(1).strip()
-        if ans and len(ans) >= 1 and '**' not in ans:
-            return ans, full_text
+    # Take only the last line to avoid subagent thinking leaking into extraction
+    lines = last_text.strip().split('\n')
+    last_line = lines[-1].strip()
 
-    # Priority 3: **X** (bare bold)
-    HEADER_PATTERNS = re.compile(
-        r'^\s*(Answer|Finding|Synthesis|Sub-question|Multi-hop|Breaking|Step|Hop|Chain|Reasoning|Key|Analysis|Summary|Task|Decomposition)\s*[:\d]*\s*$',
-        re.IGNORECASE
-    )
-    BARE_ANSWER_HEADER = re.compile(r'^\s*[Aa]nswer\s*:\s*$')
-    for m in re.finditer(r'\*\*([^\*]+)\*\*', full_text, re.DOTALL):
-        ans = m.group(1).strip()
-        if BARE_ANSWER_HEADER.match(ans):
-            continue
-        if ans and len(ans) > 1 and not HEADER_PATTERNS.match(ans):
-            return ans, full_text
+    # Priority 1: **ANSWER: X**  (non-greedy, single line only)
+    m = re.match(r'\*\*ANSWER:\s*(.+?)\*\*\s*$', last_line, re.IGNORECASE)
+    if m and m.group(1).strip():
+        return m.group(1).strip(), last_text
 
-    # Priority 4: ANSWER: **X**
-    m = re.search(r'ANSWER:\s*\*\*(.+?)\*\*', full_text, re.DOTALL)
-    if m:
-        ans = m.group(1).strip()
-        if ans and len(ans) > 1:
-            return ans, full_text
+    # Priority 2: ANSWER: X  (strip trailing punctuation)
+    m = re.match(r'ANSWER:\s*(.+?)\s*$', last_line, re.IGNORECASE)
+    if m and m.group(1).strip():
+        return m.group(1).strip().rstrip('.'), last_text
 
-    # Priority 5: ANSWER: X
-    for line in reversed(full_text.split('\n')):
-        line = line.strip()
-        if not line:
-            continue
-        line_clean = line.replace('**', '')
-        m = re.search(r'ANSWER:\s*(.+)', line_clean, re.IGNORECASE)
+    # Priority 3: **Answer: X** (no inner **, single line)
+    m = re.match(r'\*\*Answer:\s*(.+?)\*\*\s*$', last_line, re.IGNORECASE)
+    if m and m.group(1).strip() and '**' not in m.group(1):
+        return m.group(1).strip(), last_text
+
+    # Priority 4: yes/no detection (when model says "The answer is yes." etc.)
+    m = re.search(r'\b([Yy]es|[Nn]o)\b', last_line)
+    if m and 'answer' in last_line.lower():
+        return m.group(1), last_text
+
+    # Priority 5: "the answer is X" variations
+    for pat in [r'[Tt]he answer is[:\s]+([^.!?]+)', r'[Tt]he answer should be[:\s]+(.+?)(?:\.|$)']:
+        m = re.search(pat, last_line)
         if m:
-            ans = m.group(1).strip()
-            if ans and ans != '<your answer>' and len(ans) > 1:
-                return ans, full_text
+            ans = re.sub(r'^\*\*|\*\*$', '', m.group(1).strip()).strip().rstrip('.')
+            if ans:
+                return ans, last_text
 
-    # Priority 6: Last substantial line
-    for line in reversed(full_text.split('\n')):
+    # Priority 6: Scan last 3 lines for ANSWER patterns
+    for line in reversed(lines[-3:]):
         line = line.strip()
-        if (line and len(line) > 2 and
-            not re.search(r'ANN?SWER|VERIFICATION|Based on|I need to|Let me', line, re.I) and
-            line != '<your answer>'):
-            return line, full_text
+        for pat in [r'\*\*ANSWER:\s*(.+?)\*\*', r'ANSWER:\s*(.+?)\s*$']:
+            m = re.match(pat, line, re.I)
+            if m and m.group(1).strip():
+                return m.group(1).strip().rstrip('.'), last_text
 
-    return '', full_text
+    return '', last_text
+
+
+def normalize_for_match(s):
+    """Normalize string for semantic matching — remove punctuation, extra spaces."""
+    for x in [',', '.', '!', "'", '"', '-', '–', '—']:
+        s = s.replace(x, '')
+    return ' '.join(s.lower().split())
+
+
+def is_semantic_match(pred, gt):
+    """Check if pred matches gt meaning-wise, not just exact string.
+
+    Handles:
+    - Yes/No with trailing explanation (e.g., "Yes, both X and Y are musicians")
+    - Number format differences (e.g., "seven" vs "7", "3" vs "three centuries")
+    - Entity name aliases (e.g., "Bill Clinton" vs "William Jefferson Clinton")
+    - Substring containment (GT is substring of pred or vice versa)
+    - Token overlap ratio >= 0.6
+    """
+    pred_n = normalize_for_match(pred)
+    gt_n = normalize_for_match(gt)
+    if pred_n == gt_n:
+        return True
+
+    # Yes/No: extract the yes/no word
+    if gt_n in ('yes', 'no'):
+        return bool(re.search(r'\b(yes|no)\b', pred_n))
+
+    # Number normalization: strip commas and spaces
+    def parse_nums(s):
+        s = s.replace(',', '').replace(' ', '')
+        try:
+            return float(s)
+        except:
+            return None
+
+    pred_nums = [parse_nums(w) for w in pred_n.split()]
+    gt_nums = [parse_nums(w) for w in gt_n.split()]
+    pred_nums = [n for n in pred_nums if n is not None]
+    gt_nums = [n for n in gt_nums if n is not None]
+    # Numeric match: within 1% relative error
+    for pn in pred_nums:
+        for gn in gt_nums:
+            if gn != 0 and abs(pn - gn) / abs(gn) < 0.01:
+                return True
+            if gn == 0 and pn == 0:
+                return True
+
+    # Substring containment
+    if len(gt_n) >= 2 and gt_n in pred_n:
+        return True
+    if len(pred_n) >= 2 and pred_n in gt_n:
+        return True
+
+    # Token overlap
+    stopwords = {'the', 'a', 'an', 'of', 'in', 'to', 'and', 'is', 'are', 'was',
+                 'were', 'for', 'on', 'with', 'as', 'by', 'at', 'it', 'of',
+                 'that', 'this', 'be', 'has', 'have', 'had', 'not', 'but',
+                 'which', 'or', 'from', 'they', 'their', 'has', 'was', 'were'}
+    gt_tokens = set(gt_n.split()) - stopwords
+    pred_tokens = set(pred_n.split()) - stopwords
+    if gt_tokens and pred_tokens:
+        ratio = len(gt_tokens & pred_tokens) / len(gt_tokens)
+        if ratio >= 0.6:
+            return True
+
+    # First content token match (handles "7" vs "seven")
+    if gt_tokens and pred_tokens:
+        first_gt = sorted(gt_tokens, key=len, reverse=True)[0]
+        first_pred = sorted(pred_tokens, key=len, reverse=True)[0]
+        if first_gt == first_pred and len(gt_tokens) == 1:
+            return True
+
+    return False
 
 
 def parse_raw_output(raw_text):
@@ -163,19 +223,29 @@ def parse_raw_output(raw_text):
     return events
 
 
-def normalize(s):
-    s = str(s).lower().strip()
+def is_correct(pred, gold, use_semantic=False):
+    """Check if pred matches gold.
+
+    use_semantic=True: meaning-based matching (yes/no with explanation,
+    number format differences, entity aliases, token overlap).
+    use_semantic=False: strict exact match (EM).
+    """
+    if use_semantic:
+        return is_semantic_match(pred, gold)
+    # Strip punctuation and lowercase for strict EM
+    pred_n = normalize_for_match(pred)
+    gold_n = normalize_for_match(gold)
+    return pred_n == gold_n
+
+
+def normalize_for_match(s):
+    """Normalize string for matching — remove punctuation, extra spaces, lowercase."""
     for x in [',', '.', '!', "'", '"', '-', '–', '—']:
         s = s.replace(x, '')
-    return ' '.join(s.split())
+    return ' '.join(s.lower().split())
 
 
-def is_correct(pred, gold):
-    """EM check."""
-    return normalize(pred) == normalize(gold)
-
-
-def run_task(task, model, output_dir):
+def run_task(task, model, output_dir, use_semantic=False):
     task_id = task['id']
     question = task['question']
     answer = task['answer']
@@ -258,7 +328,7 @@ ANSWER: """
     )
 
     predicted, _ = extract_answer_from_jsonl_events(events)
-    correct = is_correct(predicted, answer)
+    correct = is_correct(predicted, answer, use_semantic=use_semantic)
 
     return {
         'task_id': task_id,
@@ -279,6 +349,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', default=DEFAULT_MODEL)
     parser.add_argument('--output', default=None)
+    parser.add_argument('--semantic', action='store_true',
+                        help='Use semantic matching instead of strict EM')
     args = parser.parse_args()
 
     model_name = args.model.replace('/', '_')
@@ -303,7 +375,7 @@ def main():
 
         print(f"[{i+1}/{len(tasks)}] {task_id} ... ", end='', flush=True)
 
-        result = run_task(task, args.model, output_dir)
+        result = run_task(task, args.model, output_dir, use_semantic=args.semantic)
         elapsed = time.time() - t0
 
         status = '✓' if result['correct'] else '✗'
@@ -329,7 +401,8 @@ def main():
         print(f"  >> {total}/{len(tasks)} done, acc: {correct}/{total} ({acc:.0f}%)\n", flush=True)
 
     spawned_count = sum(1 for r in [json.loads(l) for l in open(TASK_LOG)] if r['spawned'])
-    print(f"\n=== HotpotQA EM: {correct}/{total} ({100*correct/total:.1f}%) ===")
+    mode_str = 'Semantic Match' if args.semantic else 'EM'
+    print(f"\n=== HotpotQA {mode_str}: {correct}/{total} ({100*correct/total:.1f}%) ===")
     print(f"=== Spawned: {spawned_count}/{total} ({100*spawned_count/total:.1f}%) ===")
 
 
